@@ -176,58 +176,103 @@ export const gaugePublishArticle: TaskDefinition<string> = {
     }
     return str(output, 'article_url');
   },
-  prompt: `Objective:
-Publish one Gauge article from an existing Gauge content ticket. The ticket URL is the
-authoritative starting point and must be opened before taking any other action.
+  prompt: 'Publish one Gauge article from an existing content ticket with the selected thumbnail.',
+  segments: [
+    {
+      name: 'open_ticket',
+      type: 'ui',
+      inputs: ['ticket_url'],
+      code: `async (page, parameters) => {
+  await page.goto(parameters.ticket_url, { waitUntil: 'domcontentloaded' });
+  return {};
+}`,
+      prompt: 'Navigate directly to {{ticket_url}} and wait for the Gauge ticket to load.',
+    },
+    {
+      name: 'prepare_publish',
+      type: 'agent',
+      inputs: ['ticket_url', 'article_title', 'article_summary', 'destination', 'author'],
+      outputs: [
+        { name: 'already_published', type: 'boolean', description: 'The ticket was already published before this run' },
+        { name: 'existing_article_url', type: 'string', description: 'Existing article URL when already published, else empty string' },
+      ],
+      prompt: `You are on the Gauge ticket {{ticket_url}}. The ticket URL is authoritative; it does not
+matter whether the board shows it under To Do or In Progress.
 
-Start URL:
-https://app.withgauge.com
+1. Inspect the ticket's status. If it is already published or completed, change nothing and
+   return already_published=true with existing_article_url set to the article URL when visible
+   (empty string otherwise). Skip every other step.
+2. If the article draft is not written yet (the ticket still offers Write Article), click
+   Write Article exactly once and wait up to 10 minutes for the article body to appear.
+3. Open the ticket's Publish to Article flow (the dialog is titled "Publish to Webflow").
+4. Select the destination "{{destination}}" (one of blogs, templates hubs, guides).
+5. Set the author to "{{author}}".
+6. Choose the most relevant existing tag for the article titled "{{article_title}}" with
+   summary "{{article_summary}}". Never create a new tag and never select an unrelated tag.
+7. Scroll the dialog to the Additional fields section until the field labelled "Thumbnail"
+   ("Max 4MB") is visible. Do not upload anything and do not click Publish Now; the next
+   steps handle those.
 
-Inputs:
-- ticket_url: the Gauge ticket URL
-- article_title: the article title
-- article_summary: the article summary
-- destination: exactly one of blogs, templates hubs, guides
-- author: use the provided author name
-- thumbnail_file: the selected thumbnail image provided as a file input
+Return already_published=false and existing_article_url="" when you prepared the dialog.
+If any required choice is unavailable or ambiguous, report the task as not succeeded.`,
+    },
+    {
+      name: 'upload_thumbnail',
+      type: 'ui',
+      inputs: ['thumbnail_file', 'already_published'],
+      outputs: [
+        { name: 'thumbnail_uploaded', type: 'boolean', description: 'The thumbnail preview is visible in the dialog' },
+      ],
+      code: `async (page, parameters) => {
+  if (parameters.already_published) return { thumbnail_uploaded: false };
 
-Steps:
-1. Navigate directly to ticket_url as the first page navigation. Do not open an Actions menu
-   or use any other navigation before opening the ticket.
-2. Inspect the ticket's current status. The ticket URL is authoritative; it does not matter
-   whether the board shows it under To Do or In Progress.
-   - If the ticket is already published or completed, do not make any changes. Return the
-     existing article URL when visible, published=true, and a message that it was already published.
-   - If the article draft has not been written yet (the ticket still offers Write Article),
-     click Write Article once and wait up to 10 minutes for the article body to appear.
-3. Open the ticket's Publish to Article flow.
-4. Choose the exact destination from the destination input.
-5. Set the author to the provided author.
-6. Choose the most relevant existing tag from the tags dropdown based on the article content. Never
-   create a new tag and never select an unrelated tag.
-7. Scroll the publish dialog to the Additional fields section and find the field labelled
-   "Thumbnail" with "Max 4MB" next to it. Upload the provided thumbnail_file through that
-   field's own upload control only. The page contains other file inputs (for example the
-   ticket chat's attachment button behind the dialog); never upload to those. A successful
-   upload shows the image preview with the filename underneath it inside the Thumbnail field;
-   wait up to 30 seconds for them. If they do not appear, try the Thumbnail control once more,
-   and if it still shows no preview, stop without publishing and report it.
-8. Review the article details and click Publish Now exactly once.
-9. Wait for the published article URL. Open the resulting article and follow any redirect
-   before returning the URL. Use the browser's final URL or the page's canonical link.
-   For this site, the public canonical host is anchorbrowser.io, so do not return a
-   www.anchorbrowser.com redirect URL. Return the final canonical article URL with
-   published=true.
+  const field = page
+    .locator('xpath=//*[normalize-space(text())="Thumbnail"]/ancestor::*[.//input[@type="file"]][1]')
+    .first();
+  await field.waitFor({ timeout: 30000 });
+  await field.scrollIntoViewIfNeeded();
+  await field.locator('input[type="file"]').first().setInputFiles(parameters.thumbnail_file);
 
-Safety:
-- Never publish a ticket that is already completed or published.
-- Never click Publish Now more than once and never click it for an already published ticket.
-- If any required choice is unavailable or ambiguous, stop without publishing and report it.
+  const fileName = String(parameters.thumbnail_file).split('/').pop();
+  await Promise.any([
+    field.locator('img').first().waitFor({ state: 'visible', timeout: 30000 }),
+    field.getByText(fileName).first().waitFor({ state: 'visible', timeout: 30000 }),
+  ]);
+  return { thumbnail_uploaded: true };
+}`,
+      prompt: `The Publish to Webflow dialog is open. If {{already_published}} is true, do nothing and
+return thumbnail_uploaded=false.
 
-Output:
-- article_url (string)
-- published (boolean)
-- message (string)`,
+Otherwise scroll to the Additional fields section and find the field labelled "Thumbnail"
+with "Max 4MB" next to it. Upload {{thumbnail_file}} through that field's own upload control
+only. The page contains other file inputs (for example the ticket chat's attachment button
+behind the dialog); never upload to those. A successful upload shows the image preview with
+the filename underneath it inside the Thumbnail field; wait up to 30 seconds for them and
+return thumbnail_uploaded=true. If they do not appear, report the task as not succeeded.`,
+    },
+    {
+      name: 'publish',
+      type: 'agent',
+      inputs: ['already_published', 'existing_article_url', 'thumbnail_uploaded'],
+      outputs: [
+        { name: 'article_url', type: 'string', description: 'The newly published article URL' },
+        { name: 'published', type: 'boolean', description: 'Whether publishing completed' },
+        { name: 'message', type: 'string', description: 'Concise publish result' },
+      ],
+      prompt: `If {{already_published}} is true, do not click anything. Return published=true,
+article_url="{{existing_article_url}}" and message "Article was already published".
+
+Otherwise the Publish to Webflow dialog is open with destination, author, tag and thumbnail
+already set (thumbnail_uploaded={{thumbnail_uploaded}}).
+1. Confirm the Thumbnail field shows an image preview. If it does not, stop without
+   publishing and return published=false with a message explaining that.
+2. Click Publish Now exactly once. Never click it a second time.
+3. Wait for the published article URL. Open it and follow any redirect; use the browser's
+   final URL or the page's canonical link. The public canonical host is anchorbrowser.io,
+   so do not return a www.anchorbrowser.com redirect URL.
+4. Return article_url, published=true and a one-sentence message.`,
+    },
+  ],
 };
 
 export const searchConsoleRequestIndexing: TaskDefinition<{ requested: boolean; message: string }> = {

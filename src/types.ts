@@ -90,11 +90,26 @@ export interface SchemaField {
   required?: boolean;
 }
 
+/**
+ * One step of a code-authored Anchor workflow. `inputs` name task inputs or
+ * outputs of earlier segments. A `ui` segment runs `code` first and falls back
+ * to the agent with `prompt`; an `agent` segment is prompt-only.
+ */
+export interface WorkflowSegment {
+  name: string;
+  type: 'ui' | 'agent';
+  prompt: string;
+  code?: string;
+  inputs: string[];
+  outputs?: SchemaField[];
+}
+
 export interface TaskDefinition<TOutput> {
   name: string;
   description: string;
   prompt: string;
   code?: string;
+  segments?: WorkflowSegment[];
   inputSchema: SchemaField[];
   outputSchema: SchemaField[];
   aiFallback: boolean;
