@@ -218,7 +218,10 @@ export const searchConsoleRequestIndexing: TaskDefinition<{ requested: boolean; 
   name: 'search-console-request-indexing',
   description: 'Request Google Search Console indexing for a published article URL.',
   aiFallback: true,
-  inputSchema: [{ name: 'article_url', type: 'string', description: 'Published article URL' }],
+  inputSchema: [
+    { name: 'article_url', type: 'string', description: 'Published article URL' },
+    { name: 'property', type: 'string', description: 'Search Console URL-prefix property', required: false },
+  ],
   outputSchema: [
     { name: 'indexing_requested', type: 'boolean', description: 'Whether indexing was requested' },
     { name: 'message', type: 'string', description: 'Concise indexing result' },
@@ -227,6 +230,32 @@ export const searchConsoleRequestIndexing: TaskDefinition<{ requested: boolean; 
     requested: bool(output, 'indexing_requested'),
     message: str(output, 'message'),
   }),
+  code: `async (page, parameters) => {
+  const property = parameters.property || 'https://anchorbrowser.io/';
+  await page.goto(
+    'https://search.google.com/search-console/inspect' +
+      '?resource_id=' + encodeURIComponent(property) +
+      '&id=' + encodeURIComponent(parameters.article_url),
+    { waitUntil: 'domcontentloaded' },
+  );
+
+  const verdict = page.getByText(/URL is (on|not on|unknown to) Google/).first();
+  await verdict.waitFor({ timeout: 120000 });
+  const verdictText = ((await verdict.textContent()) || '').trim();
+  if (verdictText.startsWith('URL is on Google')) {
+    return { indexing_requested: true, message: verdictText + '; no request needed' };
+  }
+
+  await page.getByRole('button', { name: 'Request indexing' }).click();
+  const outcome = page
+    .getByText(/Indexing requested|already been requested|Quota exceeded|request rejected/i)
+    .first();
+  await outcome.waitFor({ timeout: 180000 });
+  const message = ((await outcome.textContent()) || '').trim();
+  await page.getByRole('button', { name: /Got it|OK/i }).click({ timeout: 5000 }).catch(() => {});
+
+  return { indexing_requested: /Indexing requested|already been requested/i.test(message), message };
+}`,
   prompt: `Objective:
 Request indexing for one newly published article in Google Search Console.
 
@@ -234,19 +263,19 @@ Start URL:
 https://search.google.com/search-console
 
 Input:
-- article_url: the exact URL to inspect
+- URL to inspect: {{article_url}}
+- Search Console property: {{property}} (when blank or null, use https://anchorbrowser.io/)
 
 Steps:
 1. Wait for the Search Console page to finish loading. Do not use the browser address bar
    for inspection.
-2. Select the Search Console property that covers the exact article URL. For articles under
-   anchorbrowser.io, use the URL-prefix property https://anchorbrowser.io/.
-   Do not inspect the URL under a different property. If that property is unavailable,
-   return indexing_requested=false and explain that the property is not available.
+2. Select the Search Console property above. Do not inspect the URL under a different
+   property. If that property is unavailable, return indexing_requested=false and explain
+   that the property is not available.
 3. Find the page's URL inspection field. It is the wide field at the top of the Search Console
    page whose placeholder or accessible label contains "Inspect any URL" or "Inspect URL".
-4. Click that inspection field, enter the exact article_url, and submit it with Enter or the
-   field's Inspect/Run inspection control.
+4. Click that inspection field, enter the exact URL to inspect, and submit it with Enter or
+   the field's Inspect/Run inspection control.
 5. Wait until the URL inspection result is fully loaded.
 6. If the result says the URL is already on Google or an indexing request is already pending,
    return indexing_requested=true with that status and do not submit a duplicate request.

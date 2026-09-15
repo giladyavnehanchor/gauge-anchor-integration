@@ -36,6 +36,36 @@ export function isStaleValidationError(error: unknown): boolean {
   ].some((marker) => message.includes(marker));
 }
 
+export function workflowCode(task: TaskDefinition<unknown>): string {
+  const parameters = (fields: TaskDefinition<unknown>['inputSchema']) =>
+    fields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      description: field.description,
+      required: field.required ?? true,
+      defaultValue: null,
+      options: null,
+    }));
+  return JSON.stringify({
+    name: task.name,
+    inputParameters: parameters(task.inputSchema),
+    outputParameters: parameters(task.outputSchema),
+    startSegmentName: 'main',
+    segments: [
+      {
+        name: 'main',
+        type: 'ui',
+        prompt: task.prompt,
+        inputParameters: parameters(task.inputSchema),
+        outputParameters: parameters(task.outputSchema),
+        deterministic: task.code,
+        next: null,
+        router: null,
+      },
+    ],
+  });
+}
+
 function record(value: unknown, context: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`Anchor returned an invalid ${context} response`);
@@ -250,7 +280,9 @@ export class HttpAnchorClient implements AnchorClient {
       throw new Error(`Anchor task name is ambiguous: ${task.name}`);
     }
     const current = existing[0];
-    if (current && current.generationStatus !== 'failed') {
+    const reusable = current && current.generationStatus !== 'failed'
+      && (!task.code || await this.hasWorkflowCode(current.id, task));
+    if (current && reusable) {
       if (current.aiFallbackEnabled !== task.aiFallback) {
         await this.request('PUT', `/task/${encodeURIComponent(current.id)}`, { ai_fallback_enabled: task.aiFallback });
       }
@@ -261,6 +293,9 @@ export class HttpAnchorClient implements AnchorClient {
     }
     if (current) {
       await this.request('DELETE', `/task/${encodeURIComponent(current.id)}`);
+    }
+    if (task.code) {
+      return this.createCodeTask(task, applicationId);
     }
 
     const body = record(
@@ -280,6 +315,40 @@ export class HttpAnchorClient implements AnchorClient {
     const taskId = optionalStringField(body, 'taskId', 'id');
     if (!taskId) throw new Error(`Anchor task generation did not return an ID for ${task.name}`);
     return this.waitForTask(taskId, task.name, timeoutMs);
+  }
+
+  /**
+   * A task authored in code is uploaded as a one-segment Anchor workflow: the
+   * segment runs our Playwright function first and falls back to the agent
+   * (guided by the prompt) only if that code throws.
+   */
+  private async createCodeTask(task: TaskDefinition<unknown>, applicationId: string): Promise<string> {
+    const body = record(
+      await this.request('POST', '/task', {
+        name: task.name,
+        description: task.description,
+        language: 'workflow',
+        code: Buffer.from(workflowCode(task), 'utf8').toString('base64'),
+        application_id: applicationId,
+        ai_fallback_enabled: task.aiFallback,
+        retries: 0,
+      }),
+      `${task.name} creation`,
+    );
+    const created = body.data && typeof body.data === 'object' ? record(body.data, `${task.name} creation`) : body;
+    const taskId = stringField(created, 'id', `${task.name} creation`);
+    await this.request('POST', `/v2/tasks/${encodeURIComponent(taskId)}/publish-draft`, {});
+    return taskId;
+  }
+
+  /** The code in this repo is the source of truth; a task with different code gets recreated. */
+  private async hasWorkflowCode(taskId: string, task: TaskDefinition<unknown>): Promise<boolean> {
+    const body = record(await this.request('GET', `/task/${encodeURIComponent(taskId)}?include=code`), 'task');
+    const detail = body.data && typeof body.data === 'object' ? record(body.data, 'task.data') : body;
+    if (typeof detail.code !== 'string' || !detail.code) return false;
+    const encoded = /^[A-Za-z0-9+/]*={0,2}$/.test(detail.code) && !detail.code.startsWith('{');
+    const code = encoded ? Buffer.from(detail.code, 'base64').toString('utf8') : detail.code;
+    return code === workflowCode(task);
   }
 
   private async listTasks(name: string): Promise<AnchorTask[]> {

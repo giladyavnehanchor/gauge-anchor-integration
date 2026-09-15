@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AnchorApiError, HttpAnchorClient } from '../src/anchor.js';
-import { authCheck, gaugeFindArticle, gaugePublishArticle } from '../src/tasks.js';
+import { AnchorApiError, HttpAnchorClient, workflowCode } from '../src/anchor.js';
+import { authCheck, gaugeFindArticle, gaugePublishArticle, searchConsoleRequestIndexing } from '../src/tasks.js';
 import { testConfig } from './fakes.js';
 
 const config = testConfig();
@@ -107,6 +107,100 @@ describe('HttpAnchorClient', () => {
       cleanup_sessions: false,
     });
     expect(fetcher.mock.calls[6]?.[1]).toMatchObject({ method: 'DELETE' });
+  });
+
+  it('uploads a code task as a one-segment workflow instead of generating it', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: 'session-3' } }))
+      .mockResolvedValueOnce(response({ tasks: [] }))
+      .mockResolvedValueOnce(response({ id: 'task-code', name: searchConsoleRequestIndexing.name, latestVersion: 'draft' }))
+      .mockResolvedValueOnce(response({ version: '1' }))
+      .mockResolvedValueOnce(
+        response({ status: 'success', result: { indexing_requested: true, message: 'Indexing requested' } }),
+      )
+      .mockResolvedValueOnce(response({}));
+    const client = new HttpAnchorClient(config, fetcher);
+
+    await expect(
+      client.runTask(searchConsoleRequestIndexing, { ...run, inputs: { article_url: 'https://anchorbrowser.io/blog/a' } }),
+    ).resolves.toEqual({ requested: true, message: 'Indexing requested' });
+
+    const urls = fetcher.mock.calls.map(([url]) => String(url));
+    expect(urls.slice(2, 5)).toEqual([
+      'https://api.anchorbrowser.io/v1/task',
+      'https://api.anchorbrowser.io/v2/tasks/task-code/publish-draft',
+      'https://api.anchorbrowser.io/v2/tasks/task-code/run',
+    ]);
+    const created = JSON.parse(bodyOf(fetcher, 2));
+    expect(created).toMatchObject({
+      name: 'search-console-request-indexing',
+      language: 'workflow',
+      application_id: 'app-1',
+      ai_fallback_enabled: true,
+    });
+    const workflow = JSON.parse(Buffer.from(created.code, 'base64').toString('utf8'));
+    expect(workflow.startSegmentName).toBe('main');
+    expect(workflow.segments).toHaveLength(1);
+    expect(workflow.segments[0]).toMatchObject({
+      type: 'ui',
+      deterministic: searchConsoleRequestIndexing.code,
+      prompt: expect.stringContaining('Request indexing'),
+    });
+    expect(workflow.inputParameters.map((p: { name: string; required: boolean }) => [p.name, p.required])).toEqual([
+      ['article_url', true],
+      ['property', false],
+    ]);
+    expect(JSON.parse(bodyOf(fetcher, 4)).input_params).toEqual({ article_url: 'https://anchorbrowser.io/blog/a' });
+  });
+
+  it('recreates a code task when the remote workflow no longer matches the repo code', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: 'session-4' } }))
+      .mockResolvedValueOnce(
+        response({ tasks: [{ id: 'task-old', name: searchConsoleRequestIndexing.name, latestVersion: '1', aiFallbackEnabled: true }] }),
+      )
+      .mockResolvedValueOnce(response({ id: 'task-old', code: Buffer.from('{"old":true}').toString('base64') }))
+      .mockResolvedValueOnce(response({}))
+      .mockResolvedValueOnce(response({ id: 'task-new', name: searchConsoleRequestIndexing.name, latestVersion: 'draft' }))
+      .mockResolvedValueOnce(response({ version: '1' }))
+      .mockResolvedValueOnce(response({ status: 'success', result: { indexing_requested: false, message: 'Quota exceeded' } }))
+      .mockResolvedValueOnce(response({}));
+    const client = new HttpAnchorClient(config, fetcher);
+
+    await expect(
+      client.runTask(searchConsoleRequestIndexing, { ...run, inputs: { article_url: 'https://anchorbrowser.io/blog/a' } }),
+    ).resolves.toEqual({ requested: false, message: 'Quota exceeded' });
+
+    const calls = fetcher.mock.calls.map(([url, init]) => `${init?.method ?? 'GET'} ${String(url)}`);
+    expect(calls.slice(2, 7)).toEqual([
+      'GET https://api.anchorbrowser.io/v1/task/task-old?include=code',
+      'DELETE https://api.anchorbrowser.io/v1/task/task-old',
+      'POST https://api.anchorbrowser.io/v1/task',
+      'POST https://api.anchorbrowser.io/v2/tasks/task-new/publish-draft',
+      'POST https://api.anchorbrowser.io/v2/tasks/task-new/run',
+    ]);
+  });
+
+  it('reuses a code task whose remote workflow matches the repo code', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: 'session-5' } }))
+      .mockResolvedValueOnce(
+        response({ tasks: [{ id: 'task-same', name: searchConsoleRequestIndexing.name, latestVersion: '1', aiFallbackEnabled: true }] }),
+      )
+      .mockResolvedValueOnce(
+        response({ id: 'task-same', code: Buffer.from(workflowCode(searchConsoleRequestIndexing)).toString('base64') }),
+      )
+      .mockResolvedValueOnce(response({ status: 'success', result: { indexing_requested: true, message: 'ok' } }))
+      .mockResolvedValueOnce(response({}));
+    const client = new HttpAnchorClient(config, fetcher);
+
+    await expect(
+      client.runTask(searchConsoleRequestIndexing, { ...run, inputs: { article_url: 'https://anchorbrowser.io/blog/a' } }),
+    ).resolves.toEqual({ requested: true, message: 'ok' });
+    expect(String(fetcher.mock.calls[3]?.[0])).toBe('https://api.anchorbrowser.io/v2/tasks/task-same/run');
   });
 
   it('reuses an existing ready task without regenerating it', async () => {

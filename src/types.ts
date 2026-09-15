@@ -86,12 +86,14 @@ export interface SchemaField {
   name: string;
   type: 'string' | 'boolean' | 'file';
   description: string;
+  required?: boolean;
 }
 
 export interface TaskDefinition<TOutput> {
   name: string;
   description: string;
   prompt: string;
+  code?: string;
   inputSchema: SchemaField[];
   outputSchema: SchemaField[];
   aiFallback: boolean;

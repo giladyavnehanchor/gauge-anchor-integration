@@ -28,10 +28,12 @@ We build [Anchor Browser](https://anchorbrowser.io), so you can guess where this
 
 The three gaps share a shape. Each one is a logged-in web UI, each has a small deterministic sequence of clicks, and each is something you would happily hand to a competent new hire with a one-paragraph instruction. That shape is exactly what Anchor's **identities** and **tasks** are for:
 
-- An **identity** is a persistent, authenticated browser profile for one application. You log in once (Gauge, Google), Anchor keeps the session alive, and every future browser session can start already logged in.
-- A **task** is a reusable automation generated from a plain-language prompt. You describe the flow once, Anchor explores the site and compiles it into a runnable task with a typed input and output schema. Then you call it like a function.
+- An **identity** is a persistent, authenticated browser profile for one application. You log in once (Gauge, Google), Anchor keeps the session alive, and every future browser session can start already logged in. Onboarding is dynamic: point Anchor at a URL and it creates the application, mints a one-time login link you can hand to whoever owns the account, and monitors the session's health from then on. When the session eventually expires, Anchor gives you a re-auth link instead of a stack trace.
+- A **task** is a reusable automation. You can generate one from a plain-language prompt, and Anchor will explore the site itself and compile the flow into a versioned task with a typed input and output schema. Or, when you already know the exact clicks, you can hand it your own Playwright code and keep the agent as a fallback. Either way you call it like a function, and every run leaves behind a recording, logs, and a structured result.
 
-So instead of reverse-engineering three different products, we wrote four prompts.
+The word we kept using internally was *reliable*. A generated task is not an LLM improvising in a browser on every run; it is compiled once, versioned, and replayed, with the agent stepping in only when the page does not match what the task expects. That is what made it reasonable to run this unattended on a timer.
+
+So instead of reverse-engineering three different products, we wrote four prompts and, for the simplest step, twenty-five lines of Playwright.
 
 ## The whole thing, from the top
 
@@ -144,11 +146,116 @@ The other three follow the same pattern:
 
 - `authCheck(target)` is a tiny, deterministic DOM check (`aiFallback: false`) that answers one question: does this page look logged in? We run it before every expensive task so that a stale session fails in ten seconds with a re-auth link, not in twenty minutes with a confused agent.
 - `gaugePublishArticle` takes the ticket URL, destination, author, and a thumbnail **file** as inputs, opens the publish dialog, sets everything, uploads the image, clicks *Publish Now* exactly once, and returns the final canonical article URL.
-- `searchConsoleRequestIndexing` takes an article URL, picks the right property, pastes the URL into the inspection field, and clicks *Request indexing* unless Google says the page is already indexed or a request is pending.
+- `searchConsoleRequestIndexing` takes an article URL, opens URL Inspection for it, and clicks *Request indexing* unless Google says the page is already indexed. This one is different from the other three, and it deserves its own section.
+
+## When you already know the clicks
+
+Search Console is the simplest of our three gaps: one deep link, one verdict to read, one button to click. It would be a waste to have an agent rediscover that every time. So for this task we wrote the browser code ourselves and let Anchor run it.
+
+An Anchor task is, under the hood, a **workflow**: a graph of segments where each segment carries both an agent prompt and an optional deterministic Playwright function. When a segment runs, the code goes first. Only if it throws does the agent take over, using the prompt. We can author that format directly. The task definition gains one field, `code`:
+
+```ts
+export const searchConsoleRequestIndexing: TaskDefinition<{ requested: boolean; message: string }> = {
+  name: 'search-console-request-indexing',
+  description: 'Request Google Search Console indexing for a published article URL.',
+  aiFallback: true,
+  inputSchema: [
+    { name: 'article_url', type: 'string', description: 'Published article URL' },
+    { name: 'property', type: 'string', description: 'Search Console URL-prefix property', required: false },
+  ],
+  outputSchema: [
+    { name: 'indexing_requested', type: 'boolean', description: 'Whether indexing was requested' },
+    { name: 'message', type: 'string', description: 'Concise indexing result' },
+  ],
+  parse: (output) => ({ requested: bool(output, 'indexing_requested'), message: str(output, 'message') }),
+  code: `async (page, parameters) => {
+  const property = parameters.property || 'https://anchorbrowser.io/';
+  await page.goto(
+    'https://search.google.com/search-console/inspect' +
+      '?resource_id=' + encodeURIComponent(property) +
+      '&id=' + encodeURIComponent(parameters.article_url),
+    { waitUntil: 'domcontentloaded' },
+  );
+
+  const verdict = page.getByText(/URL is (on|not on|unknown to) Google/).first();
+  await verdict.waitFor({ timeout: 120000 });
+  const verdictText = ((await verdict.textContent()) || '').trim();
+  if (verdictText.startsWith('URL is on Google')) {
+    return { indexing_requested: true, message: verdictText + '; no request needed' };
+  }
+
+  await page.getByRole('button', { name: 'Request indexing' }).click();
+  const outcome = page
+    .getByText(/Indexing requested|already been requested|Quota exceeded|request rejected/i)
+    .first();
+  await outcome.waitFor({ timeout: 180000 });
+  const message = ((await outcome.textContent()) || '').trim();
+  await page.getByRole('button', { name: /Got it|OK/i }).click({ timeout: 5000 }).catch(() => {});
+
+  return { indexing_requested: /Indexing requested|already been requested/i.test(message), message };
+}`,
+  prompt: `Objective:
+Request indexing for one newly published article in Google Search Console.
+
+Input:
+- URL to inspect: {{article_url}}
+- Search Console property: {{property}} (when blank or null, use https://anchorbrowser.io/)
+...`,
+};
+```
+
+The `page` is a regular Playwright page already inside the logged-in Google session, and `parameters` are the task inputs by name. The function returns the output record. That is the entire contract.
+
+Uploading it is a few lines in the client. We wrap the function in a one-segment workflow and create the task from code instead of from a prompt:
+
+```ts
+export function workflowCode(task: TaskDefinition<unknown>): string {
+  return JSON.stringify({
+    name: task.name,
+    inputParameters: parameters(task.inputSchema),
+    outputParameters: parameters(task.outputSchema),
+    startSegmentName: 'main',
+    segments: [{
+      name: 'main',
+      type: 'ui',
+      prompt: task.prompt,
+      inputParameters: parameters(task.inputSchema),
+      outputParameters: parameters(task.outputSchema),
+      deterministic: task.code,
+      next: null,
+      router: null,
+    }],
+  });
+}
+```
+
+```ts
+private async createCodeTask(task: TaskDefinition<unknown>, applicationId: string): Promise<string> {
+  const body = await this.request('POST', '/task', {
+    name: task.name,
+    description: task.description,
+    language: 'workflow',
+    code: Buffer.from(workflowCode(task), 'utf8').toString('base64'),
+    application_id: applicationId,
+    ai_fallback_enabled: task.aiFallback,
+  });
+  const taskId = stringField(body, 'id', `${task.name} creation`);
+  await this.request('POST', `/v2/tasks/${taskId}/publish-draft`, {});
+  return taskId;
+}
+```
+
+Three things we like about this arrangement:
+
+- **The repo is the source of truth.** Before reusing an existing task, the client fetches its code and compares it to what is in `tasks.ts`. If we edit the function, the next run recreates the task. No dashboard drift.
+- **The prompt is still there.** With `aiFallback: true`, if Google redesigns the inspection page and our selectors stop matching, the code throws and the agent finishes the job using the prompt, with the same typed inputs and outputs. We saw exactly this during testing: an expired Google session sent the deep link to a sign-in page, the deterministic function timed out, and the agent took over and reported precisely what blocked it. One note for hand-written fallback prompts: the agent sees your inputs through `{{name}}` placeholders, so write `{{article_url}}` rather than "the article URL".
+- **Failures produce fixes.** When a deterministic segment fails, Anchor captures the page state and execution logs and proposes a corrected draft version of the task. You review and publish the draft; nothing changes under you.
+
+Same `runTask` call, same identity, same Slack message at the end. The only difference is who wrote the clicks.
 
 ## Running a task
 
-The client code that runs any of those is generic and short. Create a browser session that is already logged in as the identity, make sure the task exists (generate it from the prompt on first use, reuse it afterwards), run it synchronously, parse the result, close the session:
+The client code that runs any of those is generic and short. Create a browser session that is already logged in as the identity, make sure the task exists (generate it from the prompt or upload it from code on first use, reuse it afterwards), run it synchronously, parse the result, close the session:
 
 ```ts
 async runTask<TOutput>(task: TaskDefinition<TOutput>, options: RunTaskOptions): Promise<TOutput> {
@@ -185,7 +292,7 @@ async runTask<TOutput>(task: TaskDefinition<TOutput>, options: RunTaskOptions): 
 }
 ```
 
-The only wrinkle worth calling out is the multipart branch. When a task input is a file, the run request becomes `multipart/form-data`, and `input_params` must be sent as a JSON *string* in one form field rather than as individual fields. We learned that from a `400 expected object, received undefined`, and it is the kind of thing a code sample saves you an hour on.
+The multipart branch is there because one of our tasks takes a file. When a task input is a file, the run request becomes `multipart/form-data`: the file goes in its own part, and the remaining inputs travel together as a JSON string in the `input_params` field. Anchor uploads the file into the browser session so the task can attach it to the publish dialog like a human would.
 
 ## Identities, and the boring part that makes it work
 
@@ -196,7 +303,7 @@ The reason this holds together unattended is `ensureIdentity`. Every flow starts
 3. If the status looks healthy, run the `authCheck` task to confirm the page actually renders logged in.
 4. If it is missing or stale, mint a re-authentication link and post it to Slack, once, and remember that we did so we do not spam the channel every two days.
 
-When a Google session finally expires, the person on rotation gets a Slack message with a link, clicks it, logs in inside Anchor's hosted browser, and the next publish just works. Nobody touches a server. Nobody stores a Google password anywhere.
+When a Google session finally expires, the person on rotation gets a Slack message with a link, clicks it, logs in inside Anchor's hosted browser, and the next publish just works. Nobody touches a server. Nobody stores a Google password anywhere. Adding a third application is one more `target(...)` line in the config: a key, a label, and a URL. Anchor does the rest.
 
 ## The human in the loop
 
@@ -216,7 +323,7 @@ Clicking a thumbnail or picking a destination updates the message in place. Clic
 
 ## What it took
 
-About 2,300 lines of TypeScript including tests, with the four prompts accounting for a good chunk of that. No Playwright scripts, no selectors, no headless browser on our server. The whole service is a small Express app on a single EC2 instance with a systemd timer for discovery and Caddy in front for the Slack callback URL. Anchor runs the browsers.
+About 2,300 lines of TypeScript including tests, with the four prompts accounting for a good chunk of that. One 25-line Playwright function, by choice, for the step where we knew the clicks. No headless browser on our server. The whole service is a small Express app on a single EC2 instance with a systemd timer for discovery and Caddy in front for the Slack callback URL. Anchor runs the browsers, keeps the logins alive, and versions the automations.
 
 The lesson we keep coming back to: the best tools in your stack will expose 90% of what you need through an API or an MCP server, and you should absolutely use that 90%. The remaining 10% is the last mile, and it lives in a browser. Now that browsers are something you can hand a paragraph of instructions to, that last mile is an afternoon, not a project.
 
