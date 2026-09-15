@@ -1,0 +1,22 @@
+[Unit]
+Description=Anchor identity monitor Express service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anchor-monitor
+Group=anchor-monitor
+WorkingDirectory=/opt/anchor-identity-monitor
+EnvironmentFile=/etc/anchor-identity-monitor.env
+ExecStart=/usr/bin/node /opt/anchor-identity-monitor/dist/src/server.js
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/anchor-identity-monitor
+
+[Install]
+WantedBy=multi-user.target
