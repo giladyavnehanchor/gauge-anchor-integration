@@ -1,22 +1,19 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { MonitorState, StateEntry, StateStore } from './types.js';
+import type { StateEntry, StateStore } from './types.js';
+
+type MonitorState = Record<string, StateEntry>;
+
+const CONDITIONS = ['healthy', 'missing', 'stale', 'pending'];
 
 function isStateEntry(value: unknown): value is StateEntry {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const entry = value as Record<string, unknown>;
   return (
-    (entry.condition === 'healthy' ||
-      entry.condition === 'missing' ||
-      entry.condition === 'stale' ||
-      entry.condition === 'pending') &&
+    CONDITIONS.includes(entry.condition as string) &&
     typeof entry.applicationId === 'string' &&
     (entry.identityId === undefined || typeof entry.identityId === 'string') &&
-    (entry.lastNotifiedCondition === undefined ||
-      entry.lastNotifiedCondition === 'healthy' ||
-      entry.lastNotifiedCondition === 'missing' ||
-      entry.lastNotifiedCondition === 'stale' ||
-      entry.lastNotifiedCondition === 'pending') &&
+    (entry.lastNotifiedCondition === undefined || CONDITIONS.includes(entry.lastNotifiedCondition as string)) &&
     typeof entry.updatedAt === 'string'
   );
 }
@@ -66,26 +63,5 @@ export class NodeFileStateStore implements StateStore {
         `Unable to read state file ${this.filePath}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }
-}
-
-export interface KvNamespace {
-  get<T>(key: string, type: 'json'): Promise<T | null>;
-  put(key: string, value: string): Promise<void>;
-}
-
-export class CloudflareKvStateStore implements StateStore {
-  constructor(
-    private readonly namespace: KvNamespace,
-    private readonly prefix = 'identity-monitor:',
-  ) {}
-
-  async get(key: string): Promise<StateEntry | undefined> {
-    const value = await this.namespace.get<unknown>(`${this.prefix}${key}`, 'json');
-    return isStateEntry(value) ? value : undefined;
-  }
-
-  async put(key: string, entry: StateEntry): Promise<void> {
-    await this.namespace.put(`${this.prefix}${key}`, JSON.stringify(entry));
   }
 }

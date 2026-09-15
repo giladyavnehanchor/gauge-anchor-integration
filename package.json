@@ -1,32 +1,29 @@
 {
   "name": "anchor-identity-monitor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "dev": "tsx src/node.ts",
-    "run": "tsx src/node.ts --once",
+    "discover": "tsx src/cli.ts",
+    "discover:watch": "tsx src/cli.ts --watch",
     "server": "tsx src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
-    "wrangler:dev": "wrangler dev --test-scheduled"
+    "build": "tsc"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
     "express": "^5.1.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260914.1",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
     "tsx": "^4.23.1",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4",
-    "wrangler": "^4.34.0"
+    "vitest": "^3.2.4"
   }
 }

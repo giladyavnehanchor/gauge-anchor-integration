@@ -1,9 +1,5 @@
-import type {
-  MonitorConfig,
-  TargetConfig,
-  TargetKey,
-  ThumbnailProvider,
-} from './types.js';
+import { resolve } from 'node:path';
+import type { Config, TargetConfig, TargetKey, ThumbnailProvider } from './types.js';
 
 type RawEnv = Record<string, unknown>;
 
@@ -38,120 +34,78 @@ function positiveInteger(env: RawEnv, key: string, fallback: number): number {
   return parsed;
 }
 
-function target(
-  env: RawEnv,
-  key: TargetKey,
-  label: string,
-  prefix: string,
-  defaultUrl: string,
-): TargetConfig {
-  const applicationId = optionalString(env, `${prefix}_APPLICATION_ID`);
-  const applicationUrl = optionalString(env, `${prefix}_APPLICATION_URL`) ?? defaultUrl;
-  const identityId = optionalString(env, `${prefix}_IDENTITY_ID`);
-  const applicationName = optionalString(env, `${prefix}_APPLICATION_NAME`) ?? label;
+function oneOf<T extends string>(env: RawEnv, key: string, allowed: readonly T[], fallback?: T): T | undefined {
+  const value = optionalString(env, key) ?? fallback;
+  if (value === undefined) return undefined;
+  if (!allowed.includes(value as T)) {
+    throw new Error(`${key} must be ${allowed.join(', ')}`);
+  }
+  return value as T;
+}
 
+function target(env: RawEnv, key: TargetKey, label: string, prefix: string, defaultUrl: string): TargetConfig {
+  const applicationId = optionalString(env, `${prefix}_APPLICATION_ID`);
+  const identityId = optionalString(env, `${prefix}_IDENTITY_ID`);
   return {
     key,
     label,
+    applicationName: optionalString(env, `${prefix}_APPLICATION_NAME`) ?? label,
+    applicationUrl: optionalString(env, `${prefix}_APPLICATION_URL`) ?? defaultUrl,
     ...(applicationId ? { applicationId } : {}),
-    applicationName,
-    applicationUrl,
     ...(identityId ? { identityId } : {}),
-    validationTaskName:
-      optionalString(env, `${prefix}_VALIDATION_TASK_NAME`) ??
-      `anchor-identity-monitor-${key}-dom-check`,
   };
 }
 
-function normalizeBaseUrl(value: string): string {
-  return value.replace(/\/+$/, '');
-}
-
-export function parseConfig(input: unknown): MonitorConfig {
-  const env: RawEnv =
-    input && typeof input === 'object' ? (input as RawEnv) : {};
-  const anchorApiKey = requiredString(env, 'ANCHOR_API_KEY');
-  const dryRun = booleanValue(env, 'DRY_RUN', false);
-  const slackWebhookUrl = optionalString(env, 'SLACK_WEBHOOK_URL');
+export function parseConfig(input: unknown): Config {
+  const env: RawEnv = input && typeof input === 'object' ? (input as RawEnv) : {};
   const slackBotToken = optionalString(env, 'SLACK_BOT_TOKEN');
   const slackChannelId = optionalString(env, 'SLACK_CHANNEL_ID');
-  const slackSigningSecret = optionalString(env, 'SLACK_SIGNING_SECRET');
-  const internalApiToken = optionalString(env, 'INTERNAL_API_TOKEN');
   if (slackBotToken && !slackChannelId) {
     throw new Error('SLACK_CHANNEL_ID is required when SLACK_BOT_TOKEN is configured');
   }
 
-  const authMethod = optionalString(env, 'REAUTH_AUTH_METHOD') ?? 'profile';
-  if (!['profile', 'dynauth', 'credentials'].includes(authMethod)) {
-    throw new Error('REAUTH_AUTH_METHOD must be profile, dynauth, or credentials');
-  }
-
-  const identityUserName = optionalString(env, 'IDENTITY_USER_NAME');
-  const thumbnailProvider = optionalString(env, 'THUMBNAIL_PROVIDER');
-  if (
-    thumbnailProvider &&
-    !['openai', 'gemini', 'anthropic'].includes(thumbnailProvider)
-  ) {
-    throw new Error('THUMBNAIL_PROVIDER must be openai, gemini, or anthropic');
-  }
   const openaiApiKey = optionalString(env, 'OPENAI_API_KEY');
   const geminiApiKey = optionalString(env, 'GEMINI_API_KEY');
-  const anthropicApiKey = optionalString(env, 'ANTHROPIC_API_KEY');
-  const selectedThumbnailProvider =
-    thumbnailProvider ??
-    (openaiApiKey ? 'openai' : geminiApiKey ? 'gemini' : anthropicApiKey ? 'anthropic' : undefined);
-  const thumbnailModel = optionalString(env, 'THUMBNAIL_MODEL');
-  const thumbnailOutputDir = optionalString(env, 'THUMBNAIL_OUTPUT_DIR');
+  const thumbnailProvider =
+    oneOf<ThumbnailProvider>(env, 'THUMBNAIL_PROVIDER', ['openai', 'gemini']) ??
+    (openaiApiKey ? 'openai' : geminiApiKey ? 'gemini' : undefined);
+
+  const optional = {
+    slackWebhookUrl: optionalString(env, 'SLACK_WEBHOOK_URL'),
+    slackBotToken,
+    slackChannelId,
+    slackSigningSecret: optionalString(env, 'SLACK_SIGNING_SECRET'),
+    internalApiToken: optionalString(env, 'INTERNAL_API_TOKEN'),
+    identityUserName: optionalString(env, 'IDENTITY_USER_NAME'),
+    thumbnailProvider,
+    thumbnailModel: optionalString(env, 'THUMBNAIL_MODEL'),
+    openaiApiKey,
+    geminiApiKey,
+  };
+
   return {
-    anchorApiBase: normalizeBaseUrl(
-      optionalString(env, 'ANCHOR_API_BASE') ?? 'https://api.anchorbrowser.io/v1',
-    ),
-    anchorApiKey,
-    ...(slackWebhookUrl ? { slackWebhookUrl } : {}),
-    ...(slackBotToken ? { slackBotToken } : {}),
-    ...(slackChannelId ? { slackChannelId } : {}),
-    ...(slackSigningSecret ? { slackSigningSecret } : {}),
-    ...(internalApiToken ? { internalApiToken } : {}),
+    anchorApiBase: (optionalString(env, 'ANCHOR_API_BASE') ?? 'https://api.anchorbrowser.io/v1').replace(/\/+$/, ''),
+    anchorApiKey: requiredString(env, 'ANCHOR_API_KEY'),
     port: positiveInteger(env, 'PORT', 8787),
-    ...(identityUserName ? { identityUserName } : {}),
-    reauthAuthMethod: authMethod as MonitorConfig['reauthAuthMethod'],
+    reauthAuthMethod: oneOf(env, 'REAUTH_AUTH_METHOD', ['profile', 'dynauth', 'credentials'], 'profile') as Config['reauthAuthMethod'],
     notifyRecovery: booleanValue(env, 'NOTIFY_RECOVERY', true),
-    dryRun,
     requestTimeoutMs: positiveInteger(env, 'REQUEST_TIMEOUT_MS', 20_000),
-    reauthTimeoutMs: positiveInteger(env, 'ANCHOR_REAUTH_TIMEOUT_MS', 900_000),
+    taskTimeoutMs: positiveInteger(env, 'ANCHOR_REAUTH_TIMEOUT_MS', 900_000),
+    longTaskTimeoutMs: positiveInteger(env, 'ANCHOR_CONTENT_TASK_TIMEOUT_MS', 1_800_000),
     taskPollIntervalMs: positiveInteger(env, 'ANCHOR_TASK_POLL_INTERVAL_MS', 3_000),
-    contentTaskTimeoutMs: positiveInteger(env, 'ANCHOR_CONTENT_TASK_TIMEOUT_MS', 1_800_000),
     thumbnailTimeoutMs: positiveInteger(env, 'THUMBNAIL_TIMEOUT_MS', 180_000),
-    gaugeContentTaskName:
-      optionalString(env, 'GAUGE_CONTENT_TASK_NAME') ??
-      'gauge-content-research-outline',
-    gaugePublishTaskName:
-      optionalString(env, 'GAUGE_PUBLISH_TASK_NAME') ??
-      'gauge-publish-article-from-todo',
-    searchConsoleIndexTaskName:
-      optionalString(env, 'SEARCH_CONSOLE_INDEX_TASK_NAME') ??
-      'search-console-request-indexing',
-    ...(selectedThumbnailProvider
-      ? { thumbnailProvider: selectedThumbnailProvider as ThumbnailProvider }
-      : {}),
-    ...(thumbnailModel ? { thumbnailModel } : {}),
-    ...(thumbnailOutputDir ? { thumbnailOutputDir } : {}),
-    ...(openaiApiKey ? { openaiApiKey } : {}),
-    ...(geminiApiKey ? { geminiApiKey } : {}),
-    ...(anthropicApiKey ? { anthropicApiKey } : {}),
+    thumbnailOutputDir: resolve(optionalString(env, 'THUMBNAIL_OUTPUT_DIR') ?? 'state/thumbnails'),
+    stateFile: optionalString(env, 'NODE_STATE_FILE') ?? 'state/identity-monitor.json',
+    draftFile: optionalString(env, 'NODE_DRAFT_FILE') ?? 'state/discovery-drafts.json',
+    publishAuthor: optionalString(env, 'PUBLISH_AUTHOR') ?? 'Idan Raman',
     targets: [
       target(env, 'gauge', 'Gauge', 'GAUGE', 'https://app.withgauge.com'),
-      target(
-        env,
-        'search-console',
-        'Google Search Console',
-        'SEARCH_CONSOLE',
-        'https://search.google.com/search-console',
-      ),
+      target(env, 'search-console', 'Google Search Console', 'SEARCH_CONSOLE', 'https://search.google.com/search-console'),
     ],
+    ...Object.fromEntries(Object.entries(optional).filter(([, value]) => value !== undefined)),
   };
 }
 
-export function readNodeConfig(): MonitorConfig {
+export function readConfig(): Config {
   return parseConfig(process.env);
 }

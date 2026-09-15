@@ -1,5 +1,5 @@
 export type TargetKey = 'gauge' | 'search-console';
-export type ThumbnailProvider = 'openai' | 'gemini' | 'anthropic';
+export type ThumbnailProvider = 'openai' | 'gemini';
 export type PublishDestination = 'blogs' | 'templates hubs' | 'guides';
 
 export type IdentityStatus =
@@ -10,19 +10,18 @@ export type IdentityStatus =
   | 'agent_failed'
   | 'failed';
 
-export type MonitorCondition = 'healthy' | 'missing' | 'stale' | 'pending';
+export type IdentityCondition = 'healthy' | 'missing' | 'stale' | 'pending';
 
 export interface TargetConfig {
   key: TargetKey;
   label: string;
-  applicationId?: string;
   applicationName: string;
-  applicationUrl?: string;
+  applicationUrl: string;
+  applicationId?: string;
   identityId?: string;
-  validationTaskName?: string;
 }
 
-export interface MonitorConfig {
+export interface Config {
   anchorApiBase: string;
   anchorApiKey: string;
   slackWebhookUrl?: string;
@@ -34,21 +33,19 @@ export interface MonitorConfig {
   identityUserName?: string;
   reauthAuthMethod: 'profile' | 'dynauth' | 'credentials';
   notifyRecovery: boolean;
-  dryRun: boolean;
   requestTimeoutMs: number;
-  reauthTimeoutMs: number;
+  taskTimeoutMs: number;
+  longTaskTimeoutMs: number;
   taskPollIntervalMs: number;
-  contentTaskTimeoutMs: number;
-  thumbnailTimeoutMs?: number;
-  gaugeContentTaskName: string;
-  gaugePublishTaskName: string;
-  searchConsoleIndexTaskName: string;
   thumbnailProvider?: ThumbnailProvider;
   thumbnailModel?: string;
-  thumbnailOutputDir?: string;
+  thumbnailTimeoutMs: number;
+  thumbnailOutputDir: string;
   openaiApiKey?: string;
   geminiApiKey?: string;
-  anthropicApiKey?: string;
+  stateFile: string;
+  draftFile: string;
+  publishAuthor: string;
   targets: TargetConfig[];
 }
 
@@ -74,23 +71,83 @@ export interface AnchorTask {
   generationStatus?: string;
 }
 
-export interface AnchorSessionUpload {
-  fileName: string;
-}
-
 export interface AnchorFile {
   fileName: string;
   mimeType: string;
   data: Uint8Array;
 }
 
-export interface GaugeContentTaskResult {
+export interface IdentityLink {
+  url: string;
+  expiresAt: string;
+}
+
+export interface SchemaField {
+  name: string;
+  type: 'string' | 'boolean' | 'file';
+  description: string;
+}
+
+export interface TaskDefinition<TOutput> {
+  name: string;
+  description: string;
+  prompt: string;
+  inputSchema: SchemaField[];
+  outputSchema: SchemaField[];
+  aiFallback: boolean;
+  longRunning?: boolean;
+  parse: (output: Record<string, unknown>) => TOutput;
+}
+
+export interface RunTaskOptions {
+  applicationId: string;
+  identityId: string;
+  inputs?: Record<string, string>;
+  file?: AnchorFile;
+}
+
+export interface AnchorClient {
+  listApplications(search?: string): Promise<AnchorApplication[]>;
+  createApplication(source: string, name: string): Promise<AnchorApplication>;
+  listIdentities(applicationId: string): Promise<AnchorIdentity[]>;
+  createIdentityLink(applicationId: string, userName?: string): Promise<IdentityLink>;
+  createReauthLink(identityId: string, authMethod: Config['reauthAuthMethod']): Promise<IdentityLink>;
+  runTask<TOutput>(task: TaskDefinition<TOutput>, options: RunTaskOptions): Promise<TOutput>;
+}
+
+export interface Identity {
+  key: TargetKey;
+  application: AnchorApplication;
+  identityId: string;
+}
+
+export interface IdentityCheck {
+  key: TargetKey;
+  condition: IdentityCondition;
+  application: AnchorApplication;
+  identityId?: string;
+  notified: boolean;
+}
+
+export interface StateEntry {
+  condition: IdentityCondition;
+  applicationId: string;
+  identityId?: string;
+  lastNotifiedCondition?: IdentityCondition;
+  updatedAt: string;
+}
+
+export interface StateStore {
+  get(key: string): Promise<StateEntry | undefined>;
+  put(key: string, entry: StateEntry): Promise<void>;
+}
+
+export interface Article {
   ticketUrl: string;
-  articleTitle: string;
-  articleSummary: string;
+  title: string;
+  summary: string;
   researchCompleted: boolean;
   outlineCompleted: boolean;
-  published: boolean;
   message: string;
 }
 
@@ -102,127 +159,18 @@ export interface ThumbnailOption {
   mimeType?: string;
 }
 
-export interface IdentityLink {
-  url: string;
-  expiresAt: string;
-}
-
-export interface ReauthenticationResult {
-  identityId: string;
-  async?: boolean;
-}
-
-export interface StateEntry {
-  condition: MonitorCondition;
-  applicationId: string;
-  identityId?: string;
-  lastNotifiedCondition?: MonitorCondition;
-  updatedAt: string;
-}
-
-export type MonitorState = Record<string, StateEntry>;
-
-export interface StateStore {
-  get(key: string): Promise<StateEntry | undefined>;
-  put(key: string, entry: StateEntry): Promise<void>;
-}
-
-export interface AnchorClient {
-  listApplications(search?: string): Promise<AnchorApplication[]>;
-  createApplication(source: string, name: string): Promise<AnchorApplication>;
-  listIdentities(applicationId: string): Promise<AnchorIdentity[]>;
-  createIdentityLink(applicationId: string, userName?: string): Promise<IdentityLink>;
-  validateIdentity(
-    identityId: string,
-    source: string,
-    applicationId: string,
-    taskName: string,
-  ): Promise<boolean>;
-  runGaugeContentTask(
-    applicationId: string,
-    identityId: string,
-    taskName: string,
-  ): Promise<GaugeContentTaskResult | null>;
-  publishGaugeArticle(
-    applicationId: string,
-    identityId: string,
-    taskName: string,
-    input: PublishRequest,
-    thumbnail: AnchorFile,
-  ): Promise<string>;
-  requestSearchConsoleIndexing(
-    applicationId: string,
-    identityId: string,
-    taskName: string,
-    articleUrl: string,
-  ): Promise<{ requested: boolean; message: string }>;
-  reauthenticate(identityId: string): Promise<ReauthenticationResult>;
-  createReauthLink(identityId: string, authMethod: MonitorConfig['reauthAuthMethod']): Promise<IdentityLink>;
-}
-
-export interface SlackMessage {
-  target: TargetConfig;
-  condition: MonitorCondition | 'recovered';
-  application: AnchorApplication;
-  identity?: AnchorIdentity;
-  link?: IdentityLink;
-}
-
-export interface SlackClient {
-  send(message: SlackMessage): Promise<void>;
-  sendGaugeContent?(message: GaugeContentMessage): Promise<void>;
-}
-
-export interface GaugeContentMessage {
-  target: TargetConfig;
-  application: AnchorApplication;
-  result: GaugeContentTaskResult;
-  thumbnails: ThumbnailOption[];
-  draftId?: string;
-  selectedThumbnailIndex?: number;
-  destination?: PublishDestination;
-}
-
 export interface ThumbnailClient {
   generate(articleTitle: string, articleSummary: string): Promise<ThumbnailOption[]>;
-}
-
-export interface MonitorDependencies {
-  anchor: AnchorClient;
-  slack: SlackClient;
-  state: StateStore;
-  now?: () => Date;
-  log?: (message: string, details?: Record<string, unknown>) => void;
-}
-
-export interface TargetResult {
-  target: TargetKey;
-  condition: MonitorCondition;
-  application: AnchorApplication;
-  applicationId: string;
-  identityId?: string;
-  notified: boolean;
-}
-
-export interface GaugeContentRun {
-  result: GaugeContentTaskResult;
-  thumbnails: ThumbnailOption[];
 }
 
 export interface DiscoveryDraft {
   id: string;
   createdAt: string;
   application: AnchorApplication;
-  content: GaugeContentTaskResult;
-  applicationId: string;
   identityId: string;
-  searchConsoleApplicationId: string;
-  searchConsoleIdentityId: string;
-  ticketUrl: string;
-  articleTitle: string;
-  articleSummary: string;
+  article: Article;
   thumbnails: ThumbnailOption[];
-  status?: 'ready' | 'published';
+  status: 'ready' | 'published';
   selectedThumbnailIndex?: number;
   selectedDestination?: PublishDestination;
   publishedArticleUrl?: string;
@@ -230,11 +178,12 @@ export interface DiscoveryDraft {
   indexingMessage?: string;
 }
 
-export interface PublishRequest {
-  draftId?: string;
-  ticketUrl: string;
-  articleTitle: string;
-  articleSummary: string;
+export interface DraftStore {
+  get(id: string): Promise<DiscoveryDraft | undefined>;
+  put(draft: DiscoveryDraft): Promise<void>;
+}
+
+export interface PublishChoice {
   thumbnailPath: string;
   destination: PublishDestination;
 }
@@ -245,8 +194,19 @@ export interface PublishResult {
   indexingMessage: string;
 }
 
-export interface MonitorRunResult {
-  startedAt: string;
-  completedAt: string;
-  targets: TargetResult[];
+export interface IdentityAlert {
+  target: TargetConfig;
+  condition: IdentityCondition | 'recovered';
+  application: AnchorApplication;
+  identity?: AnchorIdentity;
+  link?: IdentityLink;
 }
+
+export interface SlackClient {
+  sendIdentityAlert(alert: IdentityAlert): Promise<void>;
+  sendDraft(draft: DiscoveryDraft): Promise<void>;
+  updateDraft(channelId: string, messageTs: string, draft: DiscoveryDraft): Promise<void>;
+  sendChannelText(channelId: string, text: string): Promise<void>;
+}
+
+export type Log = (message: string, details?: Record<string, unknown>) => void;

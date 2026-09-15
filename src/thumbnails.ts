@@ -1,8 +1,4 @@
-import type {
-  MonitorConfig,
-  ThumbnailClient,
-  ThumbnailOption,
-} from './types.js';
+import type { Config, Log, ThumbnailClient, ThumbnailOption } from './types.js';
 
 interface GeneratedImage {
   data?: string;
@@ -70,39 +66,18 @@ function generatedImage(value: unknown): GeneratedImage {
 export class HttpThumbnailClient implements ThumbnailClient {
   constructor(
     private readonly config: Pick<
-      MonitorConfig,
-      | 'thumbnailProvider'
-      | 'thumbnailModel'
-      | 'thumbnailOutputDir'
-      | 'openaiApiKey'
-      | 'geminiApiKey'
-      | 'anthropicApiKey'
-      | 'requestTimeoutMs'
-      | 'thumbnailTimeoutMs'
-    >,
+      Config,
+      'thumbnailProvider' | 'thumbnailModel' | 'openaiApiKey' | 'geminiApiKey' | 'requestTimeoutMs'
+    > & { thumbnailTimeoutMs?: number },
     private readonly fetcher: typeof fetch = fetch,
-    private readonly saveImage?: (
-      fileName: string,
-      data: string,
-      mimeType: string,
-    ) => Promise<string>,
-    private readonly logger: (
-      message: string,
-      details?: Record<string, unknown>,
-    ) => void = (message, details) => console.log(message, details ?? ''),
+    private readonly saveImage?: (fileName: string, data: string, mimeType: string) => Promise<string>,
+    private readonly logger: Log = (message, details) => console.log(message, details ?? ''),
   ) {}
 
   async generate(articleTitle: string, articleSummary: string): Promise<ThumbnailOption[]> {
     const provider = this.config.thumbnailProvider;
     if (!provider) {
-      throw new Error(
-        'No thumbnail AI credentials configured; set OPENAI_API_KEY or GEMINI_API_KEY',
-      );
-    }
-    if (provider === 'anthropic') {
-      throw new Error(
-        'Anthropic Claude does not provide image generation; configure OPENAI_API_KEY or GEMINI_API_KEY for thumbnails',
-      );
+      throw new Error('No thumbnail AI credentials configured; set OPENAI_API_KEY or GEMINI_API_KEY');
     }
 
     const startedAt = Date.now();

@@ -6,4 +6,4 @@ Requires=anchor-identity-monitor.service
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/anchor-identity-monitor.env
-ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 3600 -X POST http://127.0.0.1:8787/discover -H Authorization: Bearer ${INTERNAL_API_TOKEN}
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 3600 -X POST http://127.0.0.1:8787/discover -H "Authorization: Bearer ${INTERNAL_API_TOKEN}"
