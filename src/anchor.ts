@@ -156,6 +156,20 @@ function unwrapTaskOutput(value: unknown, expectedFields: string[]): Record<stri
   throw new Error('Anchor task returned no structured result');
 }
 
+/** File inputs travel inside input_params as data URIs; Anchor reads the filename from the URI. */
+function fileInputs(files: Record<string, AnchorFile> = {}): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(files).flatMap(([field, file]) => {
+      const name = encodeURIComponent(file.fileName);
+      const base64 = Buffer.from(file.data).toString('base64');
+      return [
+        [field, `data:${file.mimeType};name=${name};filename=${name};base64,${base64}`],
+        [`${field}_original_filename`, file.fileName],
+      ];
+    }),
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -228,21 +242,12 @@ export class HttpAnchorClient implements AnchorClient {
     try {
       const taskId = await this.ensureTask(task, options.applicationId, options.identityId, timeoutMs);
       const path = `/v2/tasks/${encodeURIComponent(taskId)}/run`;
-      const inputs = options.inputs ?? {};
-      const payload = options.file
-        ? await this.requestMultipart(path, {
-            session_id: sessionId,
-            sync: 'true',
-            cleanup_sessions: 'false',
-            identity_skip_validation: 'true',
-            input_params: JSON.stringify(inputs),
-          }, options.file, timeoutMs)
-        : await this.request('POST', path, {
-            session_id: sessionId,
-            input_params: inputs,
-            sync: true,
-            cleanup_sessions: false,
-          }, timeoutMs);
+      const payload = await this.request('POST', path, {
+        session_id: sessionId,
+        input_params: { ...options.inputs, ...fileInputs(options.files) },
+        sync: true,
+        cleanup_sessions: false,
+      }, timeoutMs);
 
       const run = record(payload, `${task.name} run`);
       if (run.status !== undefined && run.status !== 'success') {
@@ -413,18 +418,6 @@ export class HttpAnchorClient implements AnchorClient {
       headers: body === undefined ? {} : { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }, timeoutMs);
-  }
-
-  private async requestMultipart(
-    path: string,
-    fields: Record<string, string>,
-    file: AnchorFile,
-    timeoutMs: number,
-  ): Promise<unknown> {
-    const form = new FormData();
-    for (const [key, value] of Object.entries(fields)) form.append(key, value);
-    form.append('thumbnail_file', new Blob([Buffer.from(file.data)], { type: file.mimeType }), file.fileName);
-    return this.send('POST', path, { headers: {}, body: form }, timeoutMs);
   }
 
   private async send(

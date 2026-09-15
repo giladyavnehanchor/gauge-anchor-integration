@@ -34,7 +34,7 @@ describe('publish', () => {
         applicationId: 'app-gauge',
         identityId: 'identity-gauge',
         inputs: expect.objectContaining({ destination: 'blogs', author: 'Idan Raman' }),
-        file: expect.objectContaining({ fileName: 'thumbnail-1.png', mimeType: 'image/png' }),
+        files: { thumbnail_file: expect.objectContaining({ fileName: 'thumbnail-1.png', mimeType: 'image/png' }) },
       },
     });
     expect(indexRun).toMatchObject({

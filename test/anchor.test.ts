@@ -291,7 +291,7 @@ describe('HttpAnchorClient', () => {
     expect(fetcher.mock.calls[6]?.[0]).toBe('https://api.anchorbrowser.io/v2/tasks/task-4b/run');
   });
 
-  it('sends file inputs as multipart with input_params as a JSON string', async () => {
+  it('sends file inputs inside JSON input_params as named data URIs', async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'publish-session' } }))
@@ -308,20 +308,23 @@ describe('HttpAnchorClient', () => {
       client.runTask(gaugePublishArticle, {
         ...run,
         inputs: { ticket_url: 'https://app.withgauge.com/ticket-1', destination: 'blogs', author: 'Idan Raman' },
-        file: { fileName: 'thumbnail.png', mimeType: 'image/png', data: new Uint8Array([1, 2, 3]) },
+        files: { thumbnail_file: { fileName: 'thumb nail.png', mimeType: 'image/png', data: new Uint8Array([1, 2, 3]) } },
       }),
     ).resolves.toBe('https://anchorbrowser.io/blog/article-1');
 
-    const form = fetcher.mock.calls[2]?.[1]?.body as FormData;
-    expect(form).toBeInstanceOf(FormData);
-    expect(JSON.parse(String(form.get('input_params')))).toEqual({
-      ticket_url: 'https://app.withgauge.com/ticket-1',
-      destination: 'blogs',
-      author: 'Idan Raman',
+    expect(fetcher.mock.calls[2]?.[1]?.headers).toMatchObject({ 'content-type': 'application/json' });
+    expect(JSON.parse(bodyOf(fetcher, 2))).toEqual({
+      session_id: 'publish-session',
+      sync: true,
+      cleanup_sessions: false,
+      input_params: {
+        ticket_url: 'https://app.withgauge.com/ticket-1',
+        destination: 'blogs',
+        author: 'Idan Raman',
+        thumbnail_file: 'data:image/png;name=thumb%20nail.png;filename=thumb%20nail.png;base64,AQID',
+        thumbnail_file_original_filename: 'thumb nail.png',
+      },
     });
-    expect(form.get('session_id')).toBe('publish-session');
-    expect(form.get('identity_skip_validation')).toBe('true');
-    expect(form.get('thumbnail_file')).toMatchObject({ name: 'thumbnail.png', type: 'image/png' });
   });
 
   it('surfaces task run failures and always closes the session', async () => {

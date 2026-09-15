@@ -105,7 +105,7 @@ export interface RunTaskOptions {
   applicationId: string;
   identityId: string;
   inputs?: Record<string, string>;
-  file?: AnchorFile;
+  files?: Record<string, AnchorFile>;
 }
 
 export interface AnchorClient {

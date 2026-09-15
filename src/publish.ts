@@ -67,7 +67,7 @@ async function publishArticle(
       destination,
       author: app.config.publishAuthor,
     },
-    file: thumbnail,
+    files: { thumbnail_file: thumbnail },
   });
   await app.drafts.put({ ...draft, publishedArticleUrl: articleUrl });
   app.log('Gauge article published', { draftId: draft.id, articleUrl });

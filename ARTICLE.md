@@ -267,22 +267,12 @@ async runTask<TOutput>(task: TaskDefinition<TOutput>, options: RunTaskOptions): 
   const sessionId = await this.createSession(options.identityId);
   try {
     const taskId = await this.ensureTask(task, options.applicationId, options.identityId, timeoutMs);
-    const path = `/v2/tasks/${encodeURIComponent(taskId)}/run`;
-    const inputs = options.inputs ?? {};
-    const payload = options.file
-      ? await this.requestMultipart(path, {
-          session_id: sessionId,
-          sync: 'true',
-          cleanup_sessions: 'false',
-          identity_skip_validation: 'true',
-          input_params: JSON.stringify(inputs),
-        }, options.file, timeoutMs)
-      : await this.request('POST', path, {
-          session_id: sessionId,
-          input_params: inputs,
-          sync: true,
-          cleanup_sessions: false,
-        }, timeoutMs);
+    const payload = await this.request('POST', `/v2/tasks/${encodeURIComponent(taskId)}/run`, {
+      session_id: sessionId,
+      input_params: { ...options.inputs, ...fileInputs(options.files) },
+      sync: true,
+      cleanup_sessions: false,
+    }, timeoutMs);
 
     const run = record(payload, `${task.name} run`);
     if (run.status !== undefined && run.status !== 'success') {
@@ -296,7 +286,7 @@ async runTask<TOutput>(task: TaskDefinition<TOutput>, options: RunTaskOptions): 
 }
 ```
 
-The multipart branch is there because one of our tasks takes a file. When a task input is a file, the run request becomes `multipart/form-data`: the file goes in its own part, and the remaining inputs travel together as a JSON string in the `input_params` field. Anchor uploads the file into the browser session so the task can attach it to the publish dialog like a human would.
+`fileInputs` is there because one of our tasks takes a file. A file input is just another entry in `input_params`: a base64 data URI with the filename in its header (`data:image/png;name=thumb.png;filename=thumb.png;base64,...`). Anchor decodes it, uploads it into the browser session, and the task attaches it to the publish dialog like a human would. One JSON request, no multipart.
 
 ## Identities, and the boring part that makes it work
 
