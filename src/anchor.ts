@@ -8,7 +8,9 @@ import type {
   Config,
   IdentityLink,
   RunTaskOptions,
+  SchemaField,
   TaskDefinition,
+  TaskStep,
 } from './types.js';
 
 export class AnchorApiError extends Error {
@@ -44,8 +46,24 @@ export function isStaleValidationError(error: unknown): boolean {
   ].some((marker) => message.includes(marker));
 }
 
+/** Tasks we author ourselves (code or explicit steps) are uploaded as-is; the rest Anchor generates. */
+export function isAuthored(task: TaskDefinition<unknown>): boolean {
+  return task.code !== undefined || task.steps !== undefined;
+}
+
+function taskSteps(task: TaskDefinition<unknown>): TaskStep[] {
+  if (task.steps) return task.steps;
+  if (!task.prompt) throw new Error(`Task ${task.name} needs a prompt or steps`);
+  return [{ name: 'main', prompt: task.prompt, ...(task.code === undefined ? {} : { code: task.code }) }];
+}
+
+/**
+ * Anchor runs a workflow as a chain of segments on one browser session. Each
+ * step sees every task input plus the outputs of the steps before it; the
+ * last step produces the task output.
+ */
 export function workflowCode(task: TaskDefinition<unknown>): string {
-  const parameters = (fields: TaskDefinition<unknown>['inputSchema']) =>
+  const parameters = (fields: SchemaField[]) =>
     fields.map((field) => ({
       name: field.name,
       type: field.type,
@@ -54,23 +72,27 @@ export function workflowCode(task: TaskDefinition<unknown>): string {
       defaultValue: null,
       options: null,
     }));
+  const steps = taskSteps(task);
+  const inputs = task.inputSchema;
   return JSON.stringify({
     name: task.name,
-    inputParameters: parameters(task.inputSchema),
+    inputParameters: parameters(inputs),
     outputParameters: parameters(task.outputSchema),
-    startSegmentName: 'main',
-    segments: [
-      {
-        name: 'main',
-        type: 'ui',
-        prompt: task.prompt,
-        inputParameters: parameters(task.inputSchema),
-        outputParameters: parameters(task.outputSchema),
-        deterministic: task.code,
-        next: null,
+    startSegmentName: steps[0]?.name,
+    segments: steps.map((step, index) => {
+      const next = steps[index + 1];
+      const previousOutputs = steps.slice(0, index).flatMap((earlier) => earlier.outputSchema ?? []);
+      return {
+        name: step.name,
+        type: step.code ? 'ui' : 'agent',
+        prompt: step.prompt,
+        inputParameters: parameters([...inputs, ...previousOutputs]),
+        outputParameters: parameters(next ? step.outputSchema ?? [] : task.outputSchema),
+        deterministic: step.code ?? null,
+        next: next?.name ?? null,
         router: null,
-      },
-    ],
+      };
+    }),
   });
 }
 
@@ -307,7 +329,7 @@ export class HttpAnchorClient implements AnchorClient {
       throw new Error(`Anchor task name is ambiguous: ${task.name}`);
     }
     const current = existing[0];
-    const reusable = current && current.generationStatus !== 'failed' && (task.code
+    const reusable = current && current.generationStatus !== 'failed' && (isAuthored(task)
       ? await this.hasWorkflowCode(current.id, task)
       : current.description === generatedDescription(task));
     if (current && reusable) {
@@ -322,7 +344,7 @@ export class HttpAnchorClient implements AnchorClient {
     if (current) {
       await this.request('DELETE', `/task/${encodeURIComponent(current.id)}`);
     }
-    if (task.code) {
+    if (isAuthored(task)) {
       return this.createCodeTask(task, applicationId);
     }
 
@@ -362,9 +384,9 @@ export class HttpAnchorClient implements AnchorClient {
   }
 
   /**
-   * A task authored in code is uploaded as a one-segment Anchor workflow: the
-   * segment runs our Playwright function first and falls back to the agent
-   * (guided by the prompt) only if that code throws.
+   * A task we authored is uploaded as an Anchor workflow (see workflowCode):
+   * steps with code run our Playwright function first and fall back to the
+   * agent, guided by the step prompt, only if that code throws.
    */
   private async createCodeTask(task: TaskDefinition<unknown>, applicationId: string): Promise<string> {
     const body = record(

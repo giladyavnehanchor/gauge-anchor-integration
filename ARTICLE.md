@@ -152,7 +152,7 @@ Because the prompt is the program, editing it has to redeploy the task. `ensureT
 The other three follow the same pattern:
 
 - `authCheck(target)` is a tiny, deterministic DOM check (`aiFallback: false`) that answers one question: does this page look logged in? We run it before every expensive task so that a stale session fails in ten seconds with a re-auth link, not in twenty minutes with a confused agent.
-- `gaugePublishArticle` takes the ticket URL, destination, author, and a thumbnail **file** as inputs, opens the publish dialog, sets everything, uploads the image, clicks *Publish Now* exactly once, and returns the final canonical article URL.
+- `gaugePublishArticle` takes the ticket URL, destination, author, and a thumbnail **file** as inputs, opens the publish dialog, sets everything, uploads the image, clicks *Publish Now* exactly once, and returns the final canonical article URL. It is three steps rather than one prompt, for a reason we get to below.
 - `searchConsoleRequestIndexing` takes an article URL, opens URL Inspection for it, and clicks *Request indexing* unless Google says the page is already indexed. This one is different from the other three, and it deserves its own section.
 
 ## When you already know the clicks
@@ -217,21 +217,26 @@ Uploading it is a few lines in the client. We wrap the function in a one-segment
 
 ```ts
 export function workflowCode(task: TaskDefinition<unknown>): string {
+  const steps = task.steps ?? [{ name: 'main', prompt: task.prompt, code: task.code }];
   return JSON.stringify({
     name: task.name,
     inputParameters: parameters(task.inputSchema),
     outputParameters: parameters(task.outputSchema),
-    startSegmentName: 'main',
-    segments: [{
-      name: 'main',
-      type: 'ui',
-      prompt: task.prompt,
-      inputParameters: parameters(task.inputSchema),
-      outputParameters: parameters(task.outputSchema),
-      deterministic: task.code,
-      next: null,
-      router: null,
-    }],
+    startSegmentName: steps[0].name,
+    segments: steps.map((step, index) => {
+      const next = steps[index + 1];
+      const previousOutputs = steps.slice(0, index).flatMap((earlier) => earlier.outputSchema ?? []);
+      return {
+        name: step.name,
+        type: step.code ? 'ui' : 'agent',
+        prompt: step.prompt,
+        inputParameters: parameters([...task.inputSchema, ...previousOutputs]),
+        outputParameters: parameters(next ? step.outputSchema ?? [] : task.outputSchema),
+        deterministic: step.code ?? null,
+        next: next?.name ?? null,
+        router: null,
+      };
+    }),
   });
 }
 ```
@@ -259,6 +264,68 @@ Three things we like about this arrangement:
 - **Failures produce fixes.** When a deterministic segment fails, Anchor captures the page state and execution logs and proposes a corrected draft version of the task. You review and publish the draft; nothing changes under you.
 
 Same `runTask` call, same identity, same Slack message at the end. The only difference is who wrote the clicks.
+
+## Mixing the two in one task
+
+`workflowCode` above already handles more than one step, and the publish task is why. Most of publishing is judgment: pick the right destination card, find the author, choose the most relevant existing tag, read the final URL off whatever the app shows after the click. That is agent work. One step in the middle is not: Gauge's *Thumbnail* field is a plain `<button>Choose image</button>` with no `<input type="file">` anywhere near it. Clicking it creates the input on the fly and opens the operating system's file picker. An agent has nothing in the DOM to hand a file to, and no picker to click through. It cannot upload that image, however well you describe the field.
+
+Playwright can, because it sits below the page: it intercepts the picker itself. So the task is three steps that share one browser session, and the file chooser is the only thing we wrote by hand:
+
+```ts
+export const gaugePublishArticle: TaskDefinition<string> = {
+  name: 'gauge-publish-article',
+  aiFallback: true,
+  longRunning: true,
+  inputSchema: [
+    { name: 'ticket_url', type: 'string', description: 'Gauge ticket URL' },
+    { name: 'article_title', type: 'string', description: 'Article title' },
+    { name: 'destination', type: 'string', description: 'blogs, templates hubs, or guides' },
+    { name: 'author', type: 'string', description: 'Required author name' },
+    { name: 'thumbnail_file', type: 'file', description: 'Selected article thumbnail' },
+  ],
+  outputSchema: [
+    { name: 'article_url', type: 'string', description: 'The newly published article URL' },
+    { name: 'published', type: 'boolean', description: 'Whether publishing completed' },
+    { name: 'message', type: 'string', description: 'Concise publish result' },
+  ],
+  steps: [
+    {
+      name: 'prepare',
+      outputSchema: [{ name: 'ready', type: 'boolean', description: 'Whether the publish dialog is ready' }],
+      prompt: `Open the ticket at {{ticket_url}}, click Write Article if the draft is not written yet,
+open the "Publish to Webflow" dialog, select the {{destination}} card, set Author to {{author}},
+choose the most relevant existing Tag. Leave the Thumbnail field alone. Finish with ready=true.`,
+    },
+    {
+      name: 'upload-thumbnail',
+      outputSchema: [{ name: 'thumbnail_uploaded', type: 'boolean', description: 'Whether the preview appeared' }],
+      code: `async (page, parameters) => {
+  const dialog = page.getByRole('dialog').first();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser', { timeout: 15000 }),
+    dialog.getByRole('button', { name: 'Choose image' }).click(),
+  ]);
+  await chooser.setFiles(parameters.thumbnail_file);
+
+  const field = dialog.locator('p:text-is("Thumbnail")').locator('xpath=ancestor::div[2]');
+  await field.locator('img').first().waitFor({ timeout: 60000 });
+  return { thumbnail_uploaded: true };
+}`,
+      prompt: `Look at the Thumbnail field. Return thumbnail_uploaded=true only if it shows an image
+preview with a filename under it. Do not try to upload anything yourself.`,
+    },
+    {
+      name: 'publish',
+      prompt: `If thumbnail_uploaded is false or the Thumbnail field shows no preview, stop with
+published=false. Otherwise click Publish Now exactly once, wait for the article URL, open it,
+follow redirects, and return the final anchorbrowser.io URL with published=true.`,
+    },
+  ],
+  parse: (output) => { /* published must be true and article_url present */ },
+};
+```
+
+A `file` input arrives in the code step as a path on disk, so `chooser.setFiles(parameters.thumbnail_file)` is the whole upload. Each step sees the task inputs plus the outputs of the steps before it, which is how `publish` gets to check `thumbnail_uploaded` before it touches the button. And because the step with code still carries a prompt, a broken selector degrades to an agent that reports honestly rather than a run that silently ships without an image.
 
 ## Running a task
 
@@ -314,7 +381,7 @@ Clicking a thumbnail or picking a destination updates the message in place. Clic
 
 **Say "exactly once" out loud.** The publish prompt contains *click Publish Now exactly once* and *never click it for an already published ticket*. The `parse` function also refuses `published: false` and the code refuses to run at all if the draft already has an article URL. Belt, braces, and a third belt.
 
-**Aim the upload.** Our first publish prompt said "upload the thumbnail". The ticket page has two file inputs: the thumbnail field inside the publish dialog and the chat attachment button behind it. The agent picked the second one, the dialog showed no preview, and one article went out without an image before we noticed. Two fixes: name the control ("the field labelled Thumbnail, Max 4MB", "never the chat attachment") and demand the evidence ("the preview with the filename underneath it must be visible before Publish Now"). A prompt that asks for the outcome, not just the action, turns a silent miss into a clean stop.
+**Look at the DOM before you rewrite the prompt.** Our first publish prompt said "upload the thumbnail", and the dialog never showed a preview. We spent two rounds sharpening the prompt: name the field, mention the "Max 4MB" label, warn about the chat attachment button behind the dialog, demand the preview before *Publish Now*. The agent obeyed every word and still could not do it, because the field has no file input for it to use; the only file inputs on the page belong to the chat, so every attempt landed there. One `document.querySelectorAll('input[type=file]')` in the live session told us more than both prompt rewrites. When an agent keeps failing at a single click, check whether that click is possible from inside the page at all; if not, that is your one deterministic step, not a prompting problem.
 
 **Check the login before the long task.** A stale session inside a 20-minute research task fails slowly and ambiguously. A 10-second DOM check fails fast with a precise reason. Run the cheap check first, every time.
 
@@ -322,7 +389,7 @@ Clicking a thumbnail or picking a destination updates the message in place. Clic
 
 ## What it took
 
-About 2,300 lines of TypeScript including tests, with the four prompts accounting for a good chunk of that. One 25-line Playwright function, by choice, for the step where we knew the clicks. No headless browser on our server. The whole service is a small Express app on a single EC2 instance with a systemd timer for discovery and Caddy in front for the Slack callback URL. Anchor runs the browsers, keeps the logins alive, and versions the automations.
+About 2,300 lines of TypeScript including tests, with the four prompts accounting for a good chunk of that. Two Playwright functions, one by choice for the step where we knew the clicks and one by necessity for a file picker no agent can reach. No headless browser on our server. The whole service is a small Express app on a single EC2 instance with a systemd timer for discovery and Caddy in front for the Slack callback URL. Anchor runs the browsers, keeps the logins alive, and versions the automations.
 
 The lesson we keep coming back to: the best tools in your stack will expose 90% of what you need through an API or an MCP server, and you should absolutely use that 90%. The remaining 10% is the last mile, and it lives in a browser. Now that browsers are something you can hand a paragraph of instructions to, that last mile is an afternoon, not a project.
 

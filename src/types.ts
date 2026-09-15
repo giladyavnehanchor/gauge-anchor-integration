@@ -90,11 +90,28 @@ export interface SchemaField {
   required?: boolean;
 }
 
+/**
+ * One step of a task. The agent follows `prompt`; when `code` is present that
+ * Playwright function runs first and the agent only steps in if it throws.
+ */
+export interface TaskStep {
+  name: string;
+  prompt: string;
+  code?: string;
+  outputSchema?: SchemaField[];
+}
+
+/**
+ * A task is either one prompt Anchor generates a task from (optionally with
+ * `code` running first), or an explicit list of `steps` that share one browser
+ * session and hand their outputs to the next step.
+ */
 export interface TaskDefinition<TOutput> {
   name: string;
   description: string;
-  prompt: string;
+  prompt?: string;
   code?: string;
+  steps?: TaskStep[];
   inputSchema: SchemaField[];
   outputSchema: SchemaField[];
   aiFallback: boolean;

@@ -159,7 +159,6 @@ export const gaugePublishArticle: TaskDefinition<string> = {
   inputSchema: [
     { name: 'ticket_url', type: 'string', description: 'Gauge ticket URL' },
     { name: 'article_title', type: 'string', description: 'Article title' },
-    { name: 'article_summary', type: 'string', description: 'Article summary' },
     { name: 'destination', type: 'string', description: 'blogs, templates hubs, or guides' },
     { name: 'author', type: 'string', description: 'Required author name' },
     { name: 'thumbnail_file', type: 'file', description: 'Selected article thumbnail' },
@@ -170,67 +169,93 @@ export const gaugePublishArticle: TaskDefinition<string> = {
     { name: 'message', type: 'string', description: 'Concise publish result' },
   ],
   parse: (output) => {
+    const reason = typeof output.message === 'string' ? output.message : 'no reason returned';
     if (!bool(output, 'published')) {
-      const reason = typeof output.message === 'string' ? output.message : 'no reason returned';
       throw new Error(`Gauge publish task did not publish: ${reason}`);
     }
-    return str(output, 'article_url');
+    if (typeof output.article_url !== 'string' || !output.article_url) {
+      throw new Error(`Gauge publish task published but returned no URL: ${reason}`);
+    }
+    return output.article_url;
   },
-  prompt: `Objective:
-Publish one Gauge article from an existing Gauge content ticket. The ticket URL is the
-authoritative starting point and must be opened before taking any other action.
-
-Start URL:
-https://app.withgauge.com
+  steps: [
+    {
+      name: 'prepare',
+      outputSchema: [{ name: 'ready', type: 'boolean', description: 'Whether the publish dialog is ready' }],
+      prompt: `Objective:
+Open one Gauge content ticket and get its publish dialog ready. Do not publish anything.
 
 Inputs:
-- ticket_url: the Gauge ticket URL
-- article_title: the article title
-- article_summary: the article summary
-- destination: exactly one of blogs, templates hubs, guides
-- author: use the provided author name
-- thumbnail_file: the selected thumbnail image provided as a file input
+- ticket_url: {{ticket_url}}
+- destination: {{destination}} (exactly one of blogs, templates hubs, guides)
+- author: {{author}}
 
 Steps:
-1. Navigate directly to ticket_url as the first page navigation. Do not open an Actions menu
-   or use any other navigation before opening the ticket.
-2. Inspect the ticket's current status. The ticket URL is authoritative; it does not matter
-   whether the board shows it under To Do or In Progress.
-   - If the ticket is already published or completed, do not make any changes. Return the
-     existing article URL when visible, published=true, and a message that it was already published.
-   - If the article draft has not been written yet (the ticket still offers Write Article),
-     click Write Article once and wait up to 10 minutes for the article body to appear.
-3. Open the ticket's Publish to Article flow.
-4. Choose the exact destination from the destination input.
-5. Set the author to the provided author.
-6. Choose the most relevant existing tag from the tags dropdown based on the article content. Never
-   create a new tag and never select an unrelated tag.
-7. Scroll the publish dialog to the Additional fields section and find the field labelled
-   "Thumbnail" with "Max 4MB" next to it. Upload the provided thumbnail_file with the
-   upload_file action aimed at that field's own upload control (its button, label or icon).
-   Never click the upload control or a file input directly: that opens the OS file picker,
-   which is disabled in this browser. The page contains other file inputs, for example the
-   ticket chat's attachment button behind the dialog; never aim upload_file at those, and if
-   the element you targeted is not inside the Thumbnail field, pick the one that is. A
-   successful upload shows the image preview with the filename underneath it inside the
-   Thumbnail field; wait up to 30 seconds for them. If they do not appear, retry once on the
-   Thumbnail control, and if it still shows no preview, stop without publishing and report it.
-8. Review the article details and click Publish Now exactly once.
-9. Wait for the published article URL. Open the resulting article and follow any redirect
-   before returning the URL. Use the browser's final URL or the page's canonical link.
-   For this site, the public canonical host is anchorbrowser.io, so do not return a
-   www.anchorbrowser.com redirect URL. Return the final canonical article URL with
-   published=true.
+1. Navigate directly to the ticket URL as the first action. The ticket URL is authoritative;
+   it does not matter whether the board shows it under To Do or In Progress.
+2. If the ticket is already published, stop with ready=false and say so.
+   If the ticket still offers Write Article, click it once and wait up to 10 minutes for the
+   article body to appear.
+3. Click Publish Article to open the "Publish to Webflow" dialog.
+4. Select the destination card matching the destination input.
+5. In Additional fields, set Author to the author input and choose the most relevant existing
+   Tag for the article. Never create a new tag and never pick an unrelated one.
+6. Leave the Thumbnail field alone: the next step fills it in, so do not click Choose image.
+7. Leave the dialog open and finish with ready=true.
+
+Output:
+- ready (boolean): true only when the dialog is open with destination, author and tag set`,
+    },
+    {
+      name: 'upload-thumbnail',
+      outputSchema: [{ name: 'thumbnail_uploaded', type: 'boolean', description: 'Whether the preview appeared' }],
+      code: `async (page, parameters) => {
+  const dialog = page.getByRole('dialog').first();
+  await dialog.waitFor({ timeout: 15000 });
+
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser', { timeout: 15000 }),
+    dialog.getByRole('button', { name: 'Choose image' }).click(),
+  ]);
+  await chooser.setFiles(parameters.thumbnail_file);
+
+  const field = dialog.locator('p:text-is("Thumbnail")').locator('xpath=ancestor::div[2]');
+  await field.locator('img').first().waitFor({ timeout: 60000 });
+  return { thumbnail_uploaded: true };
+}`,
+      prompt: `The "Publish to Webflow" dialog is open. Look at the Thumbnail field under Additional fields.
+If it shows an image preview with a filename under it, return thumbnail_uploaded=true.
+Otherwise return thumbnail_uploaded=false. Do not try to upload anything yourself and do not
+click Publish Now.`,
+    },
+    {
+      name: 'publish',
+      prompt: `Objective:
+Publish the article from the "Publish to Webflow" dialog that is already open, exactly once.
+
+Inputs:
+- article_title: {{article_title}}
+- thumbnail_uploaded: {{thumbnail_uploaded}}
+
+Steps:
+1. If thumbnail_uploaded is false, or the Thumbnail field shows no image preview, stop without
+   publishing and return published=false with a message.
+2. Review the dialog, then click Publish Now exactly once.
+3. Wait for the published article URL. Open it and follow any redirect. The public canonical
+   host is anchorbrowser.io, so do not return a www.anchorbrowser.com redirect URL.
+4. Return the final canonical article URL with published=true.
 
 Safety:
-- Never publish a ticket that is already completed or published.
-- Never click Publish Now more than once and never click it for an already published ticket.
-- If any required choice is unavailable or ambiguous, stop without publishing and report it.
+- Never click Publish Now more than once.
+- If the article was published but the URL cannot be found, return published=true with an
+  empty article_url and explain in the message.
 
 Output:
 - article_url (string)
 - published (boolean)
 - message (string)`,
+    },
+  ],
 };
 
 export const searchConsoleRequestIndexing: TaskDefinition<{ requested: boolean; message: string }> = {

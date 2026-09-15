@@ -63,7 +63,6 @@ async function publishArticle(
     inputs: {
       ticket_url: draft.article.ticketUrl,
       article_title: draft.article.title,
-      article_summary: draft.article.summary,
       destination,
       author: app.config.publishAuthor,
     },
