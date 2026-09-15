@@ -8,9 +8,7 @@ import type {
   Config,
   IdentityLink,
   RunTaskOptions,
-  SchemaField,
   TaskDefinition,
-  WorkflowSegment,
 } from './types.js';
 
 export class AnchorApiError extends Error {
@@ -39,17 +37,8 @@ export function isStaleValidationError(error: unknown): boolean {
   ].some((marker) => message.includes(marker));
 }
 
-export function isCodeTask(task: TaskDefinition<unknown>): boolean {
-  return Boolean(task.code || task.segments);
-}
-
-/**
- * Serialize a code-authored task as an Anchor workflow. A task with just `code`
- * becomes one segment; a task with `segments` becomes a linear chain where each
- * segment sees the task inputs plus everything earlier segments returned.
- */
 export function workflowCode(task: TaskDefinition<unknown>): string {
-  const parameters = (fields: SchemaField[]) =>
+  const parameters = (fields: TaskDefinition<unknown>['inputSchema']) =>
     fields.map((field) => ({
       name: field.name,
       type: field.type,
@@ -58,41 +47,23 @@ export function workflowCode(task: TaskDefinition<unknown>): string {
       defaultValue: null,
       options: null,
     }));
-  const segments: WorkflowSegment[] = task.segments ?? [{
-    name: 'main',
-    type: 'ui',
-    prompt: task.prompt,
-    ...(task.code ? { code: task.code } : {}),
-    inputs: task.inputSchema.map((field) => field.name),
-    outputs: task.outputSchema,
-  }];
-
-  const available = new Map(task.inputSchema.map((field) => [field.name, field]));
-  const built = segments.map((segment, index) => {
-    const inputs = segment.inputs.map((name) => {
-      const field = available.get(name);
-      if (!field) throw new Error(`Segment ${segment.name} input "${name}" is neither a task input nor an earlier output`);
-      return field;
-    });
-    for (const field of segment.outputs ?? []) available.set(field.name, field);
-    return {
-      name: segment.name,
-      type: segment.type,
-      prompt: segment.prompt,
-      inputParameters: parameters(inputs),
-      outputParameters: parameters(segment.outputs ?? []),
-      deterministic: segment.code ?? null,
-      next: segments[index + 1]?.name ?? null,
-      router: null,
-    };
-  });
-
   return JSON.stringify({
     name: task.name,
     inputParameters: parameters(task.inputSchema),
     outputParameters: parameters(task.outputSchema),
-    startSegmentName: segments[0]?.name ?? 'main',
-    segments: built,
+    startSegmentName: 'main',
+    segments: [
+      {
+        name: 'main',
+        type: 'ui',
+        prompt: task.prompt,
+        inputParameters: parameters(task.inputSchema),
+        outputParameters: parameters(task.outputSchema),
+        deterministic: task.code,
+        next: null,
+        router: null,
+      },
+    ],
   });
 }
 
@@ -329,7 +300,7 @@ export class HttpAnchorClient implements AnchorClient {
       throw new Error(`Anchor task name is ambiguous: ${task.name}`);
     }
     const current = existing[0];
-    const reusable = current && current.generationStatus !== 'failed' && (isCodeTask(task)
+    const reusable = current && current.generationStatus !== 'failed' && (task.code
       ? await this.hasWorkflowCode(current.id, task)
       : current.description === generatedDescription(task));
     if (current && reusable) {
@@ -344,7 +315,7 @@ export class HttpAnchorClient implements AnchorClient {
     if (current) {
       await this.request('DELETE', `/task/${encodeURIComponent(current.id)}`);
     }
-    if (isCodeTask(task)) {
+    if (task.code) {
       return this.createCodeTask(task, applicationId);
     }
 
@@ -368,9 +339,9 @@ export class HttpAnchorClient implements AnchorClient {
   }
 
   /**
-   * A task authored in code is uploaded as an Anchor workflow. Each ui segment
-   * runs our Playwright function first and falls back to the agent (guided by
-   * its prompt) only if that code throws.
+   * A task authored in code is uploaded as a one-segment Anchor workflow: the
+   * segment runs our Playwright function first and falls back to the agent
+   * (guided by the prompt) only if that code throws.
    */
   private async createCodeTask(task: TaskDefinition<unknown>, applicationId: string): Promise<string> {
     const body = record(

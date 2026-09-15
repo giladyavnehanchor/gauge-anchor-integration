@@ -152,7 +152,7 @@ Because the prompt is the program, editing it has to redeploy the task. `ensureT
 The other three follow the same pattern:
 
 - `authCheck(target)` is a tiny, deterministic DOM check (`aiFallback: false`) that answers one question: does this page look logged in? We run it before every expensive task so that a stale session fails in ten seconds with a re-auth link, not in twenty minutes with a confused agent.
-- `gaugePublishArticle` takes the ticket URL, destination, author, and a thumbnail **file** as inputs, opens the publish dialog, sets everything, uploads the image, clicks *Publish Now* exactly once, and returns the final canonical article URL. It is the one task that mixes agent steps with a hand-written one; more on that below.
+- `gaugePublishArticle` takes the ticket URL, destination, author, and a thumbnail **file** as inputs, opens the publish dialog, sets everything, uploads the image, clicks *Publish Now* exactly once, and returns the final canonical article URL.
 - `searchConsoleRequestIndexing` takes an article URL, opens URL Inspection for it, and clicks *Request indexing* unless Google says the page is already indexed. This one is different from the other three, and it deserves its own section.
 
 ## When you already know the clicks
@@ -260,44 +260,6 @@ Three things we like about this arrangement:
 
 Same `runTask` call, same identity, same Slack message at the end. The only difference is who wrote the clicks.
 
-### Mixing the two in one task
-
-Segments are the unit here, not tasks, so a single task can hand judgment to the agent and keep the one click that must not miss in code. Our publish task ended up that way. Reviewing the recordings, we found the agent uploading the thumbnail into the wrong `<input type="file">`: the ticket page has a chat attachment input sitting behind the publish dialog, and to an agent picking "the file input near the upload button" they look alike. Everything else about publishing (checking the ticket's state, choosing the destination and author, picking a sensible existing tag) is judgment the agent handles well.
-
-So `gaugePublishArticle` became four segments in a row. The `segments` field replaces `code`:
-
-```ts
-segments: [
-  { name: 'open_ticket', type: 'ui', inputs: ['ticket_url'],
-    code: `async (page, parameters) => { await page.goto(parameters.ticket_url); return {}; }`,
-    prompt: 'Navigate directly to {{ticket_url}}.' },
-  { name: 'prepare_publish', type: 'agent',
-    inputs: ['ticket_url', 'article_title', 'article_summary', 'destination', 'author'],
-    outputs: [{ name: 'already_published', type: 'boolean', ... }, { name: 'existing_article_url', type: 'string', ... }],
-    prompt: `... open Publish to Article, set destination, author and tag, scroll until the
-             field labelled "Thumbnail" is visible. Do not upload anything and do not click Publish Now.` },
-  { name: 'upload_thumbnail', type: 'ui', inputs: ['thumbnail_file', 'already_published'],
-    outputs: [{ name: 'thumbnail_uploaded', type: 'boolean', ... }],
-    code: `async (page, parameters) => {
-  if (parameters.already_published) return { thumbnail_uploaded: false };
-  const field = page
-    .locator('xpath=//*[normalize-space(text())="Thumbnail"]/ancestor::*[.//input[@type="file"]][1]')
-    .first();
-  await field.locator('input[type="file"]').first().setInputFiles(parameters.thumbnail_file);
-  await field.locator('img').first().waitFor({ state: 'visible', timeout: 30000 });
-  return { thumbnail_uploaded: true };
-}`,
-    prompt: `Upload {{thumbnail_file}} through the Thumbnail field's own control ...` },
-  { name: 'publish', type: 'agent', inputs: ['already_published', 'existing_article_url', 'thumbnail_uploaded'],
-    outputs: [article_url, published, message],
-    prompt: `Confirm the Thumbnail field shows a preview, click Publish Now exactly once ...` },
-]
-```
-
-Two mechanics make this pleasant. Every segment sees the task inputs plus whatever earlier segments returned, so `already_published` flows from the agent step into the code step as `parameters.already_published`, and `thumbnail_uploaded` flows on to the final agent. And a `file` input arrives in deterministic code as a real path on disk, so `setInputFiles` is one line. `workflowCode` just walks the list, wiring each segment's `next` to the following one and resolving input names against what is available at that point; an unknown name fails at build time, not in a browser.
-
-One rule we learned from Anchor's own validation: make every agent output required. Agents like to return `null` for "nothing here", and an optional string does not accept `null`. An empty string for `existing_article_url` is the honest value anyway.
-
 ## Running a task
 
 The client code that runs any of those is generic and short. Create a browser session that is already logged in as the identity, make sure the task exists (generate it from the prompt or upload it from code on first use, reuse it afterwards), run it synchronously, parse the result, close the session:
@@ -352,13 +314,15 @@ Clicking a thumbnail or picking a destination updates the message in place. Clic
 
 **Say "exactly once" out loud.** The publish prompt contains *click Publish Now exactly once* and *never click it for an already published ticket*. The `parse` function also refuses `published: false` and the code refuses to run at all if the draft already has an article URL. Belt, braces, and a third belt.
 
+**Aim the upload.** Our first publish prompt said "upload the thumbnail". The ticket page has two file inputs: the thumbnail field inside the publish dialog and the chat attachment button behind it. The agent picked the second one, the dialog showed no preview, and one article went out without an image before we noticed. Two fixes: name the control ("the field labelled Thumbnail, Max 4MB", "never the chat attachment") and demand the evidence ("the preview with the filename underneath it must be visible before Publish Now"). A prompt that asks for the outcome, not just the action, turns a silent miss into a clean stop.
+
 **Check the login before the long task.** A stale session inside a 20-minute research task fails slowly and ambiguously. A 10-second DOM check fails fast with a precise reason. Run the cheap check first, every time.
 
 **Give the browser time.** Gauge's research step can legitimately take five minutes. The prompt says so, and the task timeout is 30 minutes. Timeouts tuned for API calls will kill perfectly healthy browser automations.
 
 ## What it took
 
-About 2,400 lines of TypeScript including tests, with the prompts accounting for a good chunk of that. Two short Playwright functions, by choice, for the steps where we knew the clicks and could not afford a miss. No headless browser on our server. The whole service is a small Express app on a single EC2 instance with a systemd timer for discovery and Caddy in front for the Slack callback URL. Anchor runs the browsers, keeps the logins alive, and versions the automations.
+About 2,300 lines of TypeScript including tests, with the four prompts accounting for a good chunk of that. One 25-line Playwright function, by choice, for the step where we knew the clicks. No headless browser on our server. The whole service is a small Express app on a single EC2 instance with a systemd timer for discovery and Caddy in front for the Slack callback URL. Anchor runs the browsers, keeps the logins alive, and versions the automations.
 
 The lesson we keep coming back to: the best tools in your stack will expose 90% of what you need through an API or an MCP server, and you should absolutely use that 90%. The remaining 10% is the last mile, and it lives in a browser. Now that browsers are something you can hand a paragraph of instructions to, that last mile is an afternoon, not a project.
 

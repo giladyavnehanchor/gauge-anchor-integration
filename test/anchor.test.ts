@@ -6,16 +6,6 @@ import { testConfig } from './fakes.js';
 const config = testConfig();
 const gaugeTarget = config.targets[0]!;
 const run = { applicationId: 'app-1', identityId: 'identity-1' };
-const foundArticle = {
-  ticket_url: 'https://app.withgauge.com/tasks/ticket-2',
-  article_title: 'Generated article',
-  article_summary: 'Generated summary',
-  research_completed: true,
-  outline_completed: true,
-  article_written: true,
-  published: false,
-  message: 'Ready for review',
-};
 
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -252,47 +242,19 @@ describe('HttpAnchorClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'session-3b' } }))
       .mockResolvedValueOnce(
-        response({ tasks: [{ id: 'task-stale', name: gaugeFindArticle.name, description: 'Find [prompt 000000000000]', latestVersion: '1', aiFallbackEnabled: true }] }),
+        response({ tasks: [{ id: 'task-stale', name: gaugePublishArticle.name, description: 'Publish [prompt 000000000000]', latestVersion: '1', aiFallbackEnabled: true }] }),
       )
       .mockResolvedValueOnce(response({}))
       .mockResolvedValueOnce(response({ taskId: 'task-fresh' }))
       .mockResolvedValueOnce(response({ status: 'ready' }))
-      .mockResolvedValueOnce(response({ status: 'success', result: { ...foundArticle, article_title: 'Fresh article' } }))
+      .mockResolvedValueOnce(response({ status: 'success', result: { article_url: 'https://anchorbrowser.io/blog/a', published: true, message: 'ok' } }))
       .mockResolvedValueOnce(response({}));
     const client = new HttpAnchorClient(config, fetcher);
 
-    await expect(client.runTask(gaugeFindArticle, run)).resolves.toMatchObject({ title: 'Fresh article' });
+    await expect(client.runTask(gaugePublishArticle, run)).resolves.toBe('https://anchorbrowser.io/blog/a');
     expect(fetcher.mock.calls[2]?.[0]).toBe('https://api.anchorbrowser.io/v1/task/task-stale');
     expect(fetcher.mock.calls[2]?.[1]).toMatchObject({ method: 'DELETE' });
-    expect(bodyOf(fetcher, 3)).toContain(generatedDescription(gaugeFindArticle));
-  });
-
-  it('chains code-authored segments and passes earlier outputs forward as inputs', () => {
-    const workflow = JSON.parse(workflowCode(gaugePublishArticle));
-    const names = (fields: { name: string }[]) => fields.map((field) => field.name);
-
-    expect(workflow.startSegmentName).toBe('open_ticket');
-    expect(workflow.segments.map((segment: { name: string; next: string | null }) => [segment.name, segment.next])).toEqual([
-      ['open_ticket', 'prepare_publish'],
-      ['prepare_publish', 'upload_thumbnail'],
-      ['upload_thumbnail', 'publish'],
-      ['publish', null],
-    ]);
-    const upload = workflow.segments[2];
-    expect(upload.type).toBe('ui');
-    expect(upload.deterministic).toContain('setInputFiles(parameters.thumbnail_file)');
-    expect(names(upload.inputParameters)).toEqual(['thumbnail_file', 'already_published']);
-    expect(upload.inputParameters[1]).toMatchObject({ type: 'boolean', required: true });
-    expect(workflow.segments[1]).toMatchObject({ type: 'agent', deterministic: null });
-    expect(names(workflow.segments[3].outputParameters)).toEqual(names(workflow.outputParameters));
-  });
-
-  it('rejects a segment input that no task input or earlier segment provides', () => {
-    const broken = {
-      ...gaugePublishArticle,
-      segments: [{ name: 'only', type: 'agent' as const, prompt: 'x', inputs: ['nope'] }],
-    };
-    expect(() => workflowCode(broken)).toThrow('Segment only input "nope"');
+    expect(bodyOf(fetcher, 3)).toContain(generatedDescription(gaugePublishArticle));
   });
 
   it('deletes a failed task and generates a fresh one', async () => {
@@ -354,10 +316,7 @@ describe('HttpAnchorClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'publish-session' } }))
       .mockResolvedValueOnce(
-        response({ tasks: [{ id: 'publish-task', name: 'gauge-publish-article', latestVersion: '1', aiFallbackEnabled: true }] }),
-      )
-      .mockResolvedValueOnce(
-        response({ id: 'publish-task', code: Buffer.from(workflowCode(gaugePublishArticle)).toString('base64') }),
+        response({ tasks: [{ id: 'publish-task', name: 'gauge-publish-article', description: generatedDescription(gaugePublishArticle), latestVersion: '1', aiFallbackEnabled: true }] }),
       )
       .mockResolvedValueOnce(
         response({ status: 'success', result: { article_url: 'https://anchorbrowser.io/blog/article-1', published: true, message: 'Published' } }),
@@ -373,8 +332,8 @@ describe('HttpAnchorClient', () => {
       }),
     ).resolves.toBe('https://anchorbrowser.io/blog/article-1');
 
-    expect(fetcher.mock.calls[3]?.[1]?.headers).toMatchObject({ 'content-type': 'application/json' });
-    expect(JSON.parse(bodyOf(fetcher, 3))).toEqual({
+    expect(fetcher.mock.calls[2]?.[1]?.headers).toMatchObject({ 'content-type': 'application/json' });
+    expect(JSON.parse(bodyOf(fetcher, 2))).toEqual({
       session_id: 'publish-session',
       sync: true,
       cleanup_sessions: false,
