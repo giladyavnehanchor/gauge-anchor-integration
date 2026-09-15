@@ -150,6 +150,7 @@ export interface Article {
   summary: string;
   researchCompleted: boolean;
   outlineCompleted: boolean;
+  articleWritten: boolean;
   message: string;
 }
 

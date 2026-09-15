@@ -25,6 +25,7 @@ function draftDetails(draft: DiscoveryDraft): string {
     `*Ticket:* ${escape(article.ticketUrl)}`,
     `*Research:* ${article.researchCompleted ? 'complete' : 'incomplete'}`,
     `*Outline:* ${article.outlineCompleted ? 'complete' : 'incomplete'}`,
+    `*Article draft:* ${article.articleWritten ? 'written' : 'not written'}`,
     `*Result:* ${escape(article.message)}`,
   ].join('\n');
 }

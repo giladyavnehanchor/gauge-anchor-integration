@@ -14,7 +14,7 @@ describe('discover', () => {
   it('does nothing when Gauge has no open write-content ticket', async () => {
     const app = createFakeApp();
     healthyGauge(app);
-    app.anchor.taskResults['gauge-content-research-outline'] = null;
+    app.anchor.taskResults['gauge-content-research-outline-draft'] = null;
 
     await expect(discover(app)).resolves.toBeUndefined();
     expect(app.slack.drafts).toHaveLength(0);
@@ -23,14 +23,14 @@ describe('discover', () => {
   it('finds an article, prepares a draft, and sends it to Slack', async () => {
     const app = createFakeApp();
     healthyGauge(app);
-    app.anchor.taskResults['gauge-content-research-outline'] = article;
+    app.anchor.taskResults['gauge-content-research-outline-draft'] = article;
 
     const draft = await discover(app);
 
     expect(draft).toMatchObject({ article, thumbnails, status: 'ready', identityId: 'identity-gauge' });
     expect(app.anchor.taskRuns.map(({ task }) => task)).toEqual([
       'anchor-identity-monitor-gauge-dom-check',
-      'gauge-content-research-outline',
+      'gauge-content-research-outline-draft',
     ]);
     await expect(app.drafts.get(draft?.id ?? '')).resolves.toEqual(draft);
     expect(app.slack.drafts).toEqual([draft]);
@@ -39,7 +39,7 @@ describe('discover', () => {
   it('runs even when the Search Console identity is missing', async () => {
     const app = createFakeApp();
     healthyGauge(app);
-    app.anchor.taskResults['gauge-content-research-outline'] = article;
+    app.anchor.taskResults['gauge-content-research-outline-draft'] = article;
 
     await expect(discover(app)).resolves.toBeDefined();
     expect(app.anchor.taskRuns.some(({ task }) => task.includes('search-console'))).toBe(false);

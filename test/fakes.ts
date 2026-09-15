@@ -34,6 +34,7 @@ export const article: Article = {
   summary: 'A concise summary',
   researchCompleted: true,
   outlineCompleted: true,
+  articleWritten: true,
   message: 'Stopped before publishing',
 };
 

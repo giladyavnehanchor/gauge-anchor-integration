@@ -53,7 +53,7 @@ export async function discover(app: App): Promise<DiscoveryDraft | undefined> {
 }
 ```
 
-Four steps. Check that we are still logged in to Gauge. Ask Gauge for the next article to write and get it through research and outline. Generate thumbnail options and save a draft. Post it to Slack for a human to approve.
+Four steps. Check that we are still logged in to Gauge. Ask Gauge for the next article to write and get it through research, outline, and the written draft. Generate thumbnail options and save a draft. Post it to Slack for a human to approve.
 
 And here is publishing, which fires when someone clicks **Post** in that Slack message:
 
@@ -92,8 +92,8 @@ All four automations live in one file, `src/tasks.ts`. Each is a plain object: a
 
 ```ts
 export const gaugeFindArticle: TaskDefinition<Article | null> = {
-  name: 'gauge-content-research-outline',
-  description: 'Research and outline an open Gauge write-content ticket without publishing.',
+  name: 'gauge-content-research-outline-draft',
+  description: 'Research, outline, and draft an open Gauge write-content ticket without publishing.',
   aiFallback: true,
   longRunning: true,
   inputSchema: [],
@@ -103,6 +103,7 @@ export const gaugeFindArticle: TaskDefinition<Article | null> = {
     { name: 'article_summary', type: 'string', description: 'Concise summary of the article content' },
     { name: 'research_completed', type: 'boolean', description: 'Whether research is complete' },
     { name: 'outline_completed', type: 'boolean', description: 'Whether outline is complete' },
+    { name: 'article_written', type: 'boolean', description: 'Whether the article draft is written' },
     { name: 'published', type: 'boolean', description: 'Must remain false because publishing is prohibited' },
     { name: 'message', type: 'string', description: 'Concise task result' },
   ],
@@ -118,13 +119,14 @@ export const gaugeFindArticle: TaskDefinition<Article | null> = {
       summary: str(output, 'article_summary'),
       researchCompleted: bool(output, 'research_completed'),
       outlineCompleted: bool(output, 'outline_completed'),
+      articleWritten: bool(output, 'article_written'),
       message: str(output, 'message'),
     };
   },
   prompt: `Objective:
-Process one currently open Gauge "write content" ticket through research and outline,
-then stop before publishing the article. The task must be safe to rerun when some stages
-are already complete.
+Process one currently open Gauge "write content" ticket through research, outline, and
+the written article draft, then stop before publishing. The task must be safe to rerun
+when some stages are already complete.
 
 Steps:
 1. Navigate to Triage. If a Generate Now action is available and has not already been
@@ -135,7 +137,9 @@ Steps:
 3. Navigate to Tasks and open the Todo section. Find an open ticket whose task is to write
    content. Never select a ticket from Completed, Done, Published, or Archived.
 ...
-7. Do not click Publish Article. Stop immediately before publishing.
+7. If the article draft is not written yet, click the "Write Article" button exactly once and
+   wait for the full article body to be generated. Allow up to 10 minutes.
+8. Do not click Publish Article. Stop immediately after the draft exists and before publishing.
 ...`,
 };
 ```

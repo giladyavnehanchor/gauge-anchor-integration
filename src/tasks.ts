@@ -61,8 +61,8 @@ Output:
 }
 
 export const gaugeFindArticle: TaskDefinition<Article | null> = {
-  name: 'gauge-content-research-outline',
-  description: 'Research and outline an open Gauge write-content ticket without publishing.',
+  name: 'gauge-content-research-outline-draft',
+  description: 'Research, outline, and draft an open Gauge write-content ticket without publishing.',
   aiFallback: true,
   longRunning: true,
   inputSchema: [],
@@ -72,6 +72,7 @@ export const gaugeFindArticle: TaskDefinition<Article | null> = {
     { name: 'article_summary', type: 'string', description: 'Concise summary of the article content' },
     { name: 'research_completed', type: 'boolean', description: 'Whether research is complete' },
     { name: 'outline_completed', type: 'boolean', description: 'Whether outline is complete' },
+    { name: 'article_written', type: 'boolean', description: 'Whether the article draft is written' },
     { name: 'published', type: 'boolean', description: 'Must remain false because publishing is prohibited' },
     { name: 'message', type: 'string', description: 'Concise task result' },
   ],
@@ -87,13 +88,14 @@ export const gaugeFindArticle: TaskDefinition<Article | null> = {
       summary: str(output, 'article_summary'),
       researchCompleted: bool(output, 'research_completed'),
       outlineCompleted: bool(output, 'outline_completed'),
+      articleWritten: bool(output, 'article_written'),
       message: str(output, 'message'),
     };
   },
   prompt: `Objective:
-Process one currently open Gauge "write content" ticket through research and outline,
-then stop before publishing the article. The task must be safe to rerun when some stages
-are already complete.
+Process one currently open Gauge "write content" ticket through research, outline, and
+the written article draft, then stop before publishing. The task must be safe to rerun
+when some stages are already complete.
 
 Start URL:
 https://app.withgauge.com
@@ -117,15 +119,21 @@ Steps:
    complete, preserve it and continue.
 6. If Outline is incomplete, complete the Outline stage. If Outline is already complete,
    preserve it and continue.
-7. Do not click Publish Article, do not submit publication, and do not make any irreversible
-   publishing change. Stop immediately before publishing.
-8. Return the current ticket page URL, the article title, a concise summary of the content,
-   and the completion state of research, outline, and publishing.
+7. If the article draft is not written yet, click the "Write Article" button exactly once and
+   wait for the full article body to be generated and visible on the ticket. Allow up to
+   10 minutes, checking visible progress rather than clicking again. If the article is
+   already written, preserve it and continue. Do not edit the generated text.
+8. Do not click Publish Article, do not submit publication, and do not make any irreversible
+   publishing change. Stop immediately after the article draft exists and before publishing.
+9. Return the current ticket page URL, the article title, a concise summary of the written
+   article, and the completion state of research, outline, article draft, and publishing.
 
 Important behavior:
-- Reuse Research and Outline work already complete on the selected Todo ticket; never restart
-  research, select a completed-stack ticket, or duplicate a ticket.
-- Research may take up to 5 minutes. Use generous waits and inspect visible progress after each wait.
+- Reuse Research, Outline, and Write Article work already complete on the selected Todo
+  ticket; never restart a completed stage, click Write Article more than once, select a
+  completed-stack ticket, or duplicate a ticket.
+- Research may take up to 5 minutes and article writing up to 10 minutes. Use generous waits
+  and inspect visible progress after each wait.
 - If no eligible Todo write-content ticket exists, return the current Gauge URL, use "No article found"
   as the title, use a concise "No open write-content ticket was found" summary, and explain
   that no ticket was found.
@@ -136,6 +144,7 @@ Output:
 - article_summary (string)
 - research_completed (boolean)
 - outline_completed (boolean)
+- article_written (boolean)
 - published (boolean): must remain false
 - message (string)`,
 };

@@ -256,6 +256,7 @@ describe('HttpAnchorClient', () => {
             article_summary: 'Generated summary',
             research_completed: true,
             outline_completed: true,
+            article_written: true,
             published: false,
             message: 'Ready for review',
           },

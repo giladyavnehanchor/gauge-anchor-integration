@@ -76,7 +76,7 @@ describe('handleSlackInteraction', () => {
   it('runs discovery in the background from the retry button', async () => {
     const app = createFakeApp();
     healthyGauge(app);
-    app.anchor.taskResults['gauge-content-research-outline'] = article;
+    app.anchor.taskResults['gauge-content-research-outline-draft'] = article;
 
     const reply = await handleSlackInteraction(app, payload(
       { action_id: 'run-discovery', value: JSON.stringify({ target: 'gauge' }) },

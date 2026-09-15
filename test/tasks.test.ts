@@ -25,6 +25,7 @@ describe('task definitions', () => {
       article_summary: 'Summary',
       research_completed: true,
       outline_completed: false,
+      article_written: false,
       published: false,
       message: 'Outline pending',
     };
@@ -35,6 +36,7 @@ describe('task definitions', () => {
       summary: 'Summary',
       researchCompleted: true,
       outlineCompleted: false,
+      articleWritten: false,
       message: 'Outline pending',
     });
     expect(gaugeFindArticle.parse({ ...output, article_title: 'No article found' })).toBeNull();
