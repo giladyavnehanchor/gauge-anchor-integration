@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AnchorApiError, HttpAnchorClient, workflowCode } from '../src/anchor.js';
+import { AnchorApiError, HttpAnchorClient, generatedDescription, workflowCode } from '../src/anchor.js';
 import { authCheck, gaugeFindArticle, gaugePublishArticle, searchConsoleRequestIndexing } from '../src/tasks.js';
 import { testConfig } from './fakes.js';
 
@@ -208,7 +208,7 @@ describe('HttpAnchorClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'session-2' } }))
       .mockResolvedValueOnce(
-        response({ tasks: [{ id: 'task-existing', name: 'anchor-identity-monitor-gauge-dom-check', latestVersion: 'latest', aiFallbackEnabled: false }] }),
+        response({ tasks: [{ id: 'task-existing', name: 'anchor-identity-monitor-gauge-dom-check', description: generatedDescription(authCheck(gaugeTarget)), latestVersion: 'latest', aiFallbackEnabled: false }] }),
       )
       .mockResolvedValueOnce(response({ status: 'success', result: { authenticated: false } }))
       .mockResolvedValueOnce(response({}));
@@ -224,7 +224,7 @@ describe('HttpAnchorClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'session-2' } }))
       .mockResolvedValueOnce(
-        response({ tasks: [{ id: 'task-existing', name: 'anchor-identity-monitor-gauge-dom-check', latestVersion: 'latest', aiFallbackEnabled: true }] }),
+        response({ tasks: [{ id: 'task-existing', name: 'anchor-identity-monitor-gauge-dom-check', description: generatedDescription(authCheck(gaugeTarget)), latestVersion: 'latest', aiFallbackEnabled: true }] }),
       )
       .mockResolvedValueOnce(response({}))
       .mockResolvedValueOnce(response({ status: 'success', result: { authenticated: true } }))
@@ -235,6 +235,26 @@ describe('HttpAnchorClient', () => {
 
     expect(fetcher.mock.calls[2]?.[0]).toBe('https://api.anchorbrowser.io/v1/task/task-existing');
     expect(fetcher.mock.calls[2]?.[1]).toMatchObject({ method: 'PUT', body: JSON.stringify({ ai_fallback_enabled: false }) });
+  });
+
+  it('regenerates a task whose prompt fingerprint is stale', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: 'session-3b' } }))
+      .mockResolvedValueOnce(
+        response({ tasks: [{ id: 'task-stale', name: gaugePublishArticle.name, description: 'Publish [prompt 000000000000]', latestVersion: '1', aiFallbackEnabled: true }] }),
+      )
+      .mockResolvedValueOnce(response({}))
+      .mockResolvedValueOnce(response({ taskId: 'task-fresh' }))
+      .mockResolvedValueOnce(response({ status: 'ready' }))
+      .mockResolvedValueOnce(response({ status: 'success', result: { article_url: 'https://anchorbrowser.io/blog/a', published: true, message: 'ok' } }))
+      .mockResolvedValueOnce(response({}));
+    const client = new HttpAnchorClient(config, fetcher);
+
+    await expect(client.runTask(gaugePublishArticle, run)).resolves.toBe('https://anchorbrowser.io/blog/a');
+    expect(fetcher.mock.calls[2]?.[0]).toBe('https://api.anchorbrowser.io/v1/task/task-stale');
+    expect(fetcher.mock.calls[2]?.[1]).toMatchObject({ method: 'DELETE' });
+    expect(bodyOf(fetcher, 3)).toContain(generatedDescription(gaugePublishArticle));
   });
 
   it('deletes a failed task and generates a fresh one', async () => {
@@ -296,7 +316,7 @@ describe('HttpAnchorClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'publish-session' } }))
       .mockResolvedValueOnce(
-        response({ tasks: [{ id: 'publish-task', name: 'gauge-publish-article-from-todo', latestVersion: '1', aiFallbackEnabled: true }] }),
+        response({ tasks: [{ id: 'publish-task', name: 'gauge-publish-article', description: generatedDescription(gaugePublishArticle), latestVersion: '1', aiFallbackEnabled: true }] }),
       )
       .mockResolvedValueOnce(
         response({ status: 'success', result: { article_url: 'https://anchorbrowser.io/blog/article-1', published: true, message: 'Published' } }),
@@ -332,7 +352,7 @@ describe('HttpAnchorClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'session-5' } }))
       .mockResolvedValueOnce(
-        response({ tasks: [{ id: 'task-5', name: 'anchor-identity-monitor-gauge-dom-check', latestVersion: '1', aiFallbackEnabled: false }] }),
+        response({ tasks: [{ id: 'task-5', name: 'anchor-identity-monitor-gauge-dom-check', description: generatedDescription(authCheck(gaugeTarget)), latestVersion: '1', aiFallbackEnabled: false }] }),
       )
       .mockResolvedValueOnce(response({ status: 'failed', error: 'Browser crashed' }))
       .mockResolvedValueOnce(response({}));

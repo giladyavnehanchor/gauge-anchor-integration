@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   AnchorApplication,
   AnchorClient,
@@ -127,6 +128,7 @@ function parseTask(value: unknown, context: string): AnchorTask {
   return {
     id: stringField(task, 'id', context),
     name: stringField(task, 'name', context),
+    ...(typeof task.description === 'string' ? { description: task.description } : {}),
     ...(latestVersion ? { latestVersion } : {}),
     ...(generationStatus ? { generationStatus } : {}),
     ...(aiFallbackEnabled !== undefined ? { aiFallbackEnabled } : {}),
@@ -154,6 +156,19 @@ function unwrapTaskOutput(value: unknown, expectedFields: string[]): Record<stri
     }
   }
   throw new Error('Anchor task returned no structured result');
+}
+
+/**
+ * The prompt is the program, so a generated task is stamped with a fingerprint of the
+ * prompt and schemas. Editing any of them regenerates the task on its next run.
+ */
+export function promptFingerprint(task: TaskDefinition<unknown>): string {
+  const source = JSON.stringify([task.prompt, task.inputSchema, task.outputSchema]);
+  return createHash('sha256').update(source).digest('hex').slice(0, 12);
+}
+
+export function generatedDescription(task: TaskDefinition<unknown>): string {
+  return `${task.description} [prompt ${promptFingerprint(task)}]`;
 }
 
 /** File inputs travel inside input_params as data URIs; Anchor reads the filename from the URI. */
@@ -285,8 +300,9 @@ export class HttpAnchorClient implements AnchorClient {
       throw new Error(`Anchor task name is ambiguous: ${task.name}`);
     }
     const current = existing[0];
-    const reusable = current && current.generationStatus !== 'failed'
-      && (!task.code || await this.hasWorkflowCode(current.id, task));
+    const reusable = current && current.generationStatus !== 'failed' && (task.code
+      ? await this.hasWorkflowCode(current.id, task)
+      : current.description === generatedDescription(task));
     if (current && reusable) {
       if (current.aiFallbackEnabled !== task.aiFallback) {
         await this.request('PUT', `/task/${encodeURIComponent(current.id)}`, { ai_fallback_enabled: task.aiFallback });
@@ -306,7 +322,7 @@ export class HttpAnchorClient implements AnchorClient {
     const body = record(
       await this.request('POST', '/v2/tasks/generate', {
         taskName: task.name,
-        description: task.description,
+        description: generatedDescription(task),
         taskPrompt: task.prompt,
         application_id: applicationId,
         identity_id: identityId,

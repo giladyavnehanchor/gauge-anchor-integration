@@ -107,34 +107,36 @@ Steps:
    If it got tasks pending, click accept on all of them until there are no more.
 2. Wait generously for Gauge research to finish: allow up to 5 minutes, checking visible
    progress rather than restarting the operation.
-3. Navigate to Tasks and open the Todo stack or Todo section before looking for a ticket.
-   Find an open ticket whose task is to write content inside Todo. Never select a ticket
-   from Completed, Done, Published, Archived, or any other completed stack, even if it
-   still appears in the task list. If there are multiple eligible Todo write-content tickets,
-   use the first one shown. Do not create a new ticket.
-4. Open the Todo ticket and verify that its section/status is Todo or open before acting.
-   If the ticket is completed, published, done, archived, or not in Todo, ignore it and
-   continue searching only within Todo.
+3. Navigate to Tasks. The board has To Do, In Progress, and Completed columns. Pick one
+   "Write content" ticket in this order:
+   - First, a write-content ticket in In Progress (it shows a Continue button). This is a
+     ticket whose article work already started; resume it rather than starting another.
+   - Otherwise, the first write-content ticket in To Do (it shows a Write Article button).
+   Never select a ticket from Completed, Done, Published, or Archived, even if it still
+   appears in the task list. Do not create a new ticket.
+4. Open the chosen ticket and verify it is not completed or published before acting. If it
+   is, ignore it and continue searching In Progress and then To Do.
 5. If Research is incomplete, complete or wait for the Research stage. If Research is already
    complete, preserve it and continue.
 6. If Outline is incomplete, complete the Outline stage. If Outline is already complete,
    preserve it and continue.
-7. If the article draft is not written yet, click the "Write Article" button exactly once and
-   wait for the full article body to be generated and visible on the ticket. Allow up to
-   10 minutes, checking visible progress rather than clicking again. If the article is
-   already written, preserve it and continue. Do not edit the generated text.
+7. If the article draft is not written yet, click the "Write Article" button exactly once
+   (this moves the ticket to In Progress, which is expected) and wait for the full article
+   body to be generated and visible on the ticket. Allow up to 10 minutes, checking visible
+   progress rather than clicking again. If the article is already written, preserve it and
+   continue. Do not edit the generated text.
 8. Do not click Publish Article, do not submit publication, and do not make any irreversible
    publishing change. Stop immediately after the article draft exists and before publishing.
 9. Return the current ticket page URL, the article title, a concise summary of the written
    article, and the completion state of research, outline, article draft, and publishing.
 
 Important behavior:
-- Reuse Research, Outline, and Write Article work already complete on the selected Todo
+- Reuse Research, Outline, and Write Article work already complete on the selected
   ticket; never restart a completed stage, click Write Article more than once, select a
   completed-stack ticket, or duplicate a ticket.
 - Research may take up to 5 minutes and article writing up to 10 minutes. Use generous waits
   and inspect visible progress after each wait.
-- If no eligible Todo write-content ticket exists, return the current Gauge URL, use "No article found"
+- If no eligible In Progress or To Do write-content ticket exists, return the current Gauge URL, use "No article found"
   as the title, use a concise "No open write-content ticket was found" summary, and explain
   that no ticket was found.
 
@@ -150,8 +152,8 @@ Output:
 };
 
 export const gaugePublishArticle: TaskDefinition<string> = {
-  name: 'gauge-publish-article-from-todo',
-  description: 'Publish a Gauge Todo article with a selected thumbnail.',
+  name: 'gauge-publish-article',
+  description: 'Publish a Gauge content ticket with a selected thumbnail.',
   aiFallback: true,
   longRunning: true,
   inputSchema: [
@@ -192,11 +194,12 @@ Inputs:
 Steps:
 1. Navigate directly to ticket_url as the first page navigation. Do not open an Actions menu
    or use any other navigation before opening the ticket.
-2. Inspect the ticket's current status:
+2. Inspect the ticket's current status. The ticket URL is authoritative; it does not matter
+   whether the board shows it under To Do or In Progress.
    - If the ticket is already published or completed, do not make any changes. Return the
      existing article URL when visible, published=true, and a message that it was already published.
-   - Otherwise continue only if the ticket is open and in the Todo section. If it is not in
-     Todo, stop without changes and return published=false.
+   - If the article draft has not been written yet (the ticket still offers Write Article),
+     click Write Article once and wait up to 10 minutes for the article body to appear.
 3. Open the ticket's Publish to Article flow.
 4. Choose the exact destination from the destination input.
 5. Set the author to the provided author.
@@ -213,7 +216,7 @@ Steps:
    published=true.
 
 Safety:
-- Never publish a ticket outside Todo.
+- Never publish a ticket that is already completed or published.
 - Never click Publish Now more than once and never click it for an already published ticket.
 - If any required choice is unavailable or ambiguous, stop without publishing and report it.
 

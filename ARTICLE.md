@@ -134,8 +134,9 @@ Steps:
    click accept on all of them until there are no more.
 2. Wait generously for Gauge research to finish: allow up to 5 minutes, checking visible
    progress rather than restarting the operation.
-3. Navigate to Tasks and open the Todo section. Find an open ticket whose task is to write
-   content. Never select a ticket from Completed, Done, Published, or Archived.
+3. Navigate to Tasks. Pick one "Write content" ticket: first a ticket in In Progress (its
+   article work already started; resume it), otherwise the first one in To Do. Never select
+   a ticket from Completed, Done, Published, or Archived.
 ...
 7. If the article draft is not written yet, click the "Write Article" button exactly once and
    wait for the full article body to be generated. Allow up to 10 minutes.
@@ -145,6 +146,8 @@ Steps:
 ```
 
 The prompt is the program. It reads like the instruction you would give a new teammate, including the things you would say twice because they matter: *do not restart research that is already running*, *never pick a ticket from a completed stack*, *stop before publishing*. Anchor turns that into a browser automation; we never wrote a selector.
+
+Because the prompt is the program, editing it has to redeploy the task. `ensureTask` stamps a short hash of the prompt and schemas into the generated task's description, and regenerates the task the next time it runs with a different hash. Step 3 above went through exactly that: our first version only looked in To Do, and the moment *Write Article* moved a ticket to In Progress the next discovery run would have started a second one. Fixing it was a prompt edit and a commit.
 
 The other three follow the same pattern:
 

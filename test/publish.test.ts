@@ -12,7 +12,7 @@ async function setup(): Promise<{ app: FakeApp; thumbnailPath: string }> {
   const app = createFakeApp({ thumbnailOutputDir: outputDir });
   await app.drafts.put(readyDraft({ thumbnails: [{ title: 'Option 1', prompt: 'prompt', filePath: thumbnailPath }] }));
   healthySearchConsole(app);
-  app.anchor.taskResults['gauge-publish-article-from-todo'] = 'https://anchorbrowser.io/blog/article-1';
+  app.anchor.taskResults['gauge-publish-article'] = 'https://anchorbrowser.io/blog/article-1';
   app.anchor.taskResults['search-console-request-indexing'] = { requested: true, message: 'Indexing requested' };
   return { app, thumbnailPath };
 }
@@ -29,7 +29,7 @@ describe('publish', () => {
 
     const [, publishRun, indexRun] = app.anchor.taskRuns;
     expect(publishRun).toMatchObject({
-      task: 'gauge-publish-article-from-todo',
+      task: 'gauge-publish-article',
       options: {
         applicationId: 'app-gauge',
         identityId: 'identity-gauge',
@@ -54,7 +54,7 @@ describe('publish', () => {
     await expect(publish(app, 'draft-1', { thumbnailPath, destination: 'blogs' })).rejects.toThrow(
       'Google Search Console identity is missing',
     );
-    expect(app.anchor.taskRuns.some(({ task }) => task === 'gauge-publish-article-from-todo')).toBe(false);
+    expect(app.anchor.taskRuns.some(({ task }) => task === 'gauge-publish-article')).toBe(false);
   });
 
   it('does not publish twice when the article URL is already stored', async () => {
@@ -64,7 +64,7 @@ describe('publish', () => {
 
     await publish(app, 'draft-1', { thumbnailPath, destination: 'blogs' });
 
-    expect(app.anchor.taskRuns.some(({ task }) => task === 'gauge-publish-article-from-todo')).toBe(false);
+    expect(app.anchor.taskRuns.some(({ task }) => task === 'gauge-publish-article')).toBe(false);
     expect(app.anchor.taskRuns.some(({ task }) => task === 'search-console-request-indexing')).toBe(true);
   });
 

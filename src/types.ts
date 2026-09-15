@@ -66,6 +66,7 @@ export interface AnchorIdentity {
 export interface AnchorTask {
   id: string;
   name: string;
+  description?: string;
   latestVersion?: string;
   aiFallbackEnabled?: boolean;
   generationStatus?: string;
