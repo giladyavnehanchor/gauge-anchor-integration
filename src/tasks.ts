@@ -205,10 +205,13 @@ Steps:
 5. Set the author to the provided author.
 6. Choose the most relevant existing tag from the tags dropdown based on the article content. Never
    create a new tag and never select an unrelated tag.
-7. Upload the provided thumbnail_file through the article thumbnail upload control, exactly once.
-   Gauge may not show a filename or preview right away; do not re-upload and do not treat a
-   missing preview as a failure. Only stop without publishing if the upload control itself
-   cannot be found. Mention in the message whether a thumbnail preview was visible.
+7. Scroll the publish dialog to the Additional fields section and find the field labelled
+   "Thumbnail" with "Max 4MB" next to it. Upload the provided thumbnail_file through that
+   field's own upload control only. The page contains other file inputs (for example the
+   ticket chat's attachment button behind the dialog); never upload to those. A successful
+   upload shows the image preview with the filename underneath it inside the Thumbnail field;
+   wait up to 30 seconds for them. If they do not appear, try the Thumbnail control once more,
+   and if it still shows no preview, stop without publishing and report it.
 8. Review the article details and click Publish Now exactly once.
 9. Wait for the published article URL. Open the resulting article and follow any redirect
    before returning the URL. Use the browser's final URL or the page's canonical link.
