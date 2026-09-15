@@ -291,6 +291,48 @@ describe('HttpAnchorClient', () => {
     expect(bodyOf(fetcher, 3)).toContain('Completed, Done, Published');
   });
 
+  it('retries generation once when Anchor reports the first attempt failed', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: 'session-3c' } }))
+      .mockResolvedValueOnce(response({ tasks: [] }))
+      .mockResolvedValueOnce(response({ taskId: 'task-first' }))
+      .mockResolvedValueOnce(response({ status: 'failed', error: 'Failed to run browser' }))
+      .mockResolvedValueOnce(response({}))
+      .mockResolvedValueOnce(response({ taskId: 'task-second' }))
+      .mockResolvedValueOnce(response({ status: 'ready' }))
+      .mockResolvedValueOnce(response({ status: 'success', result: { authenticated: true } }))
+      .mockResolvedValueOnce(response({}));
+    const client = new HttpAnchorClient(config, fetcher);
+
+    await expect(client.runTask(authCheck(gaugeTarget), run)).resolves.toBe(true);
+    const calls = fetcher.mock.calls.map(([url, init]) => `${init?.method ?? 'GET'} ${String(url)}`);
+    expect(calls.slice(2, 8)).toEqual([
+      'POST https://api.anchorbrowser.io/v2/tasks/generate',
+      'GET https://api.anchorbrowser.io/v2/tasks/task-first/generation-status',
+      'DELETE https://api.anchorbrowser.io/v1/task/task-first',
+      'POST https://api.anchorbrowser.io/v2/tasks/generate',
+      'GET https://api.anchorbrowser.io/v2/tasks/task-second/generation-status',
+      'POST https://api.anchorbrowser.io/v2/tasks/task-second/run',
+    ]);
+  });
+
+  it('gives up when generation fails twice in a row', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: 'session-3d' } }))
+      .mockResolvedValueOnce(response({ tasks: [] }))
+      .mockResolvedValueOnce(response({ taskId: 'task-first' }))
+      .mockResolvedValueOnce(response({ status: 'failed' }))
+      .mockResolvedValueOnce(response({}))
+      .mockResolvedValueOnce(response({ taskId: 'task-second' }))
+      .mockResolvedValueOnce(response({ status: 'failed', error: 'still broken' }))
+      .mockResolvedValueOnce(response({}));
+    const client = new HttpAnchorClient(config, fetcher);
+
+    await expect(client.runTask(authCheck(gaugeTarget), run)).rejects.toThrow('Anchor task generation failed: still broken');
+  });
+
   it('retries a transient generation-status 404 and follows a replacement task ID', async () => {
     const fetcher = vi
       .fn<typeof fetch>()

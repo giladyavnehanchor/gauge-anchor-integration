@@ -23,6 +23,13 @@ export class AnchorApiError extends Error {
   }
 }
 
+class TaskGenerationError extends Error {
+  constructor(readonly taskId: string, detail?: string) {
+    super(detail ? `Anchor task generation failed: ${detail}` : 'Anchor task generation failed');
+    this.name = 'TaskGenerationError';
+  }
+}
+
 export function isStaleValidationError(error: unknown): boolean {
   if (error instanceof AnchorApiError && (error.status === 412 || error.status === 422)) {
     return true;
@@ -319,6 +326,22 @@ export class HttpAnchorClient implements AnchorClient {
       return this.createCodeTask(task, applicationId);
     }
 
+    // Generation explores the site in a fresh browser; a pod that fails to start is a transient blip.
+    try {
+      return await this.generateTask(task, applicationId, identityId, timeoutMs);
+    } catch (error) {
+      if (!(error instanceof TaskGenerationError)) throw error;
+      await this.request('DELETE', `/task/${encodeURIComponent(error.taskId)}`).catch(() => undefined);
+      return this.generateTask(task, applicationId, identityId, timeoutMs);
+    }
+  }
+
+  private async generateTask(
+    task: TaskDefinition<unknown>,
+    applicationId: string,
+    identityId: string,
+    timeoutMs: number,
+  ): Promise<string> {
     const body = record(
       await this.request('POST', '/v2/tasks/generate', {
         taskName: task.name,
@@ -413,11 +436,7 @@ export class HttpAnchorClient implements AnchorClient {
       }
       if (status.status === 'ready') return taskId;
       if (status.status === 'failed') {
-        throw new Error(
-          typeof status.error === 'string'
-            ? `Anchor task generation failed: ${status.error}`
-            : 'Anchor task generation failed',
-        );
+        throw new TaskGenerationError(taskId, typeof status.error === 'string' ? status.error : undefined);
       }
       await sleep(this.config.taskPollIntervalMs);
     }

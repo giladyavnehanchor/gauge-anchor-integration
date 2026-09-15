@@ -89,12 +89,12 @@ describe('handleSlackInteraction', () => {
     expect(app.slack.texts[0]).toBe('Discovery finished. Draft created for "A Gauge article".');
   });
 
-  it('rejects unknown drafts and actions', async () => {
+  it('answers clicks on stale messages politely and rejects unknown actions', async () => {
     const app = createFakeApp();
 
     await expect(
       handleSlackInteraction(app, payload({ action_id: 'thumbnail-select-0', value: JSON.stringify({ draftId: 'nope' }) })),
-    ).rejects.toThrow('Discovery draft was not found');
+    ).resolves.toMatchObject({ response_type: 'ephemeral', text: expect.stringContaining('no longer available') });
 
     await app.drafts.put(readyDraft());
     await expect(

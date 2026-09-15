@@ -62,6 +62,9 @@ export async function handleSlackInteraction(app: App, payload: Record<string, u
   }
 
   const draft = await loadDraft(app, interaction);
+  if (!draft) {
+    return { response_type: 'ephemeral', text: 'This draft is no longer available. Use the latest discovery message or run discovery again.' };
+  }
   if (!interaction.messageTs) throw new Error('Slack interaction lacks message ID');
 
   if (interaction.actionId.startsWith('thumbnail-select-')) {
@@ -93,12 +96,12 @@ export async function handleSlackInteraction(app: App, payload: Record<string, u
   throw new Error(`Unsupported Slack action: ${interaction.actionId}`);
 }
 
-async function loadDraft(app: App, interaction: Interaction): Promise<DiscoveryDraft> {
+async function loadDraft(app: App, interaction: Interaction): Promise<DiscoveryDraft | undefined> {
   const prefix = 'destination-selection:';
   const draftId = text(interaction.actionValue.draftId) ||
     (interaction.blockId.startsWith(prefix) ? interaction.blockId.slice(prefix.length) : '');
   const draft = draftId ? await app.drafts.get(draftId) : undefined;
-  if (!draft) throw new Error('Discovery draft was not found');
+  if (!draft) app.log('Slack interaction for unknown draft', { draftId, actionId: interaction.actionId });
   return draft;
 }
 
