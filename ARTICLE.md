@@ -49,25 +49,25 @@ export async function discover(app: App): Promise<DiscoveryDraft | undefined> {
 
   const draft = await prepareDraft(app, gauge, article);
   await sendDraftToSlack(app, draft);
-  return draft;
+  return scheduleAutoPublish(app, draft);
 }
 ```
 
-Four steps. Check that we are still logged in to Gauge. Ask Gauge for the next article to write and get it through research, outline, and the written draft. Generate thumbnail options and save a draft. Post it to Slack for a human to approve.
+Five steps. Check that we are still logged in to Gauge. Ask Gauge for the next article to write and get it through research, outline, and the written draft. Generate thumbnail options and save a draft. Post it to Slack for a human to approve. Start a fifteen-minute countdown, in case nobody does.
 
 And here is publishing, which fires when someone clicks **Post** in that Slack message:
 
 ```ts
 export async function publish(app: App, draftId: string, choice: PublishChoice): Promise<PublishResult> {
-  const draft = await loadPublishableDraft(app, draftId);
+  const draft = await loadDraft(app, draftId);
   if (draft.status === 'published') return publishedResult(draft);
   const thumbnail = await loadThumbnail(app, draft, choice.thumbnailPath);
 
   inFlight.add(draft.id);
   try {
-    const searchConsole = await requireIdentity(app, 'search-console');
-    const articleUrl = await publishArticle(app, draft, choice.destination, thumbnail);
-    const indexing = await requestIndexing(app, searchConsole, articleUrl);
+    const gauge = await requireIdentity(app, 'gauge');
+    const articleUrl = await publishArticle(app, draft, gauge, choice.destination, thumbnail);
+    const indexing = await requestIndexing(app, articleUrl);
     return markPublished(app, draft, articleUrl, indexing);
   } finally {
     inFlight.delete(draft.id);
@@ -75,7 +75,9 @@ export async function publish(app: App, draftId: string, choice: PublishChoice):
 }
 ```
 
-Check that we are still logged in to Google. Publish the article through Gauge with the chosen thumbnail and destination. Ask Search Console to index the new URL. Record the result so a second click cannot publish twice.
+Check that we are still logged in to Gauge. Publish the article through Gauge with the chosen thumbnail and destination. Ask Search Console to index the new URL. Record the result so a second click cannot publish twice.
+
+Each step depends only on the identity it actually uses. Publishing needs Gauge, so a Gauge session that has expired stops it cold. Indexing needs Google, so if the Google session has expired, `requestIndexing` does not throw: the article is already live, and failing the whole publish over a step that has nothing to do with Gauge would be wrong. Instead it returns `requested: false` with the reason, the identity monitor posts its usual re-authentication link, and the Slack result message grows a **Request indexing** button that runs just that one step once someone has logged back in.
 
 Everything interesting is inside those `findArticleToWrite`, `publishArticle`, and `requestIndexing` calls, and each of them is a single line:
 
@@ -374,6 +376,8 @@ When a Google session finally expires, the person on rotation gets a Slack messa
 We deliberately did not automate the *decision* to publish. Discovery ends in a Slack message with the article title, summary, ticket link, and five generated thumbnail options rendered as buttons. A destination dropdown and a **Post** button sit underneath.
 
 Clicking a thumbnail or picking a destination updates the message in place. Clicking **Post** returns an ephemeral "Publishing started" immediately, then runs `publish()` in the background and reports the article URL and the indexing status back to the channel a few minutes later. The draft is saved to disk with the selected options, so a second click, a retry after a failure, or two people racing each other all resolve to the same single publish.
+
+We did put a clock on the decision, though. The message says so in its footer: if nobody reacts within fifteen minutes, the article is published to the blog with the first thumbnail. Any click on the message cancels the countdown, and the cancellation is stored on the draft rather than in memory, so a server restart in the middle of the window re-arms the timer instead of forgetting it. When the countdown fires, Slack gets a plain sentence saying the publish was automatic and which defaults it used, followed by the same result message a manual publish would produce.
 
 ## Things we got wrong first
 

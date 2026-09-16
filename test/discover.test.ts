@@ -36,6 +36,18 @@ describe('discover', () => {
     expect(app.slack.drafts).toEqual([draft]);
   });
 
+  it('starts the auto-publish countdown once the draft is in Slack', async () => {
+    const app = createFakeApp({ autoPublishDelayMs: 900_000 });
+    healthyGauge(app);
+    app.anchor.taskResults['gauge-content-research-outline-draft'] = article;
+
+    const draft = await discover(app);
+
+    expect(draft?.autoPublishAt).toBeDefined();
+    expect(app.slack.drafts[0]?.autoPublishAt).toBeUndefined();
+    await expect(app.drafts.get(draft?.id ?? '')).resolves.toMatchObject({ autoPublishAt: draft?.autoPublishAt });
+  });
+
   it('runs even when the Search Console identity is missing', async () => {
     const app = createFakeApp();
     healthyGauge(app);

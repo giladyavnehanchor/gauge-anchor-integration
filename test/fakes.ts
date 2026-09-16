@@ -10,6 +10,7 @@ import type {
   DiscoveryDraft,
   IdentityAlert,
   IdentityLink,
+  PublishResult,
   RunTaskOptions,
   SlackClient,
   TaskDefinition,
@@ -57,6 +58,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     thumbnailTimeoutMs: 1000,
     thumbnailOutputDir: '/tmp',
     thumbnailReferenceImage: '/tmp/reference.png',
+    autoPublishDelayMs: 0,
     stateFile: 'state/test.json',
     draftFile: 'state/test-drafts.json',
     publishAuthor: 'Idan Raman',
@@ -120,6 +122,7 @@ export class FakeSlack implements SlackClient {
   alerts: IdentityAlert[] = [];
   drafts: DiscoveryDraft[] = [];
   updates: DiscoveryDraft[] = [];
+  results: Array<{ draft: DiscoveryDraft; result: PublishResult; channelId?: string }> = [];
   texts: string[] = [];
   fail = false;
 
@@ -136,7 +139,11 @@ export class FakeSlack implements SlackClient {
     this.updates.push(draft);
   }
 
-  async sendChannelText(_channelId: string, text: string): Promise<void> {
+  async sendPublishResult(draft: DiscoveryDraft, result: PublishResult, channelId?: string): Promise<void> {
+    this.results.push({ draft, result, ...(channelId ? { channelId } : {}) });
+  }
+
+  async sendChannelText(text: string): Promise<void> {
     this.texts.push(text);
   }
 }

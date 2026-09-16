@@ -42,6 +42,7 @@ export interface Config {
   thumbnailTimeoutMs: number;
   thumbnailOutputDir: string;
   thumbnailReferenceImage: string;
+  autoPublishDelayMs: number;
   openaiApiKey?: string;
   geminiApiKey?: string;
   stateFile: string;
@@ -196,6 +197,7 @@ export interface DiscoveryDraft {
   status: 'ready' | 'published';
   selectedThumbnailIndex?: number;
   selectedDestination?: PublishDestination;
+  autoPublishAt?: string;
   publishedArticleUrl?: string;
   indexingRequested?: boolean;
   indexingMessage?: string;
@@ -204,6 +206,7 @@ export interface DiscoveryDraft {
 export interface DraftStore {
   get(id: string): Promise<DiscoveryDraft | undefined>;
   put(draft: DiscoveryDraft): Promise<void>;
+  list(): Promise<DiscoveryDraft[]>;
 }
 
 export interface PublishChoice {
@@ -229,7 +232,8 @@ export interface SlackClient {
   sendIdentityAlert(alert: IdentityAlert): Promise<void>;
   sendDraft(draft: DiscoveryDraft): Promise<void>;
   updateDraft(channelId: string, messageTs: string, draft: DiscoveryDraft): Promise<void>;
-  sendChannelText(channelId: string, text: string): Promise<void>;
+  sendPublishResult(draft: DiscoveryDraft, result: PublishResult, channelId?: string): Promise<void>;
+  sendChannelText(text: string, channelId?: string): Promise<void>;
 }
 
 export type Log = (message: string, details?: Record<string, unknown>) => void;

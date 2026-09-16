@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { createApp } from './app.js';
+import { resumeAutoPublish } from './auto-publish.js';
 import { discover } from './discover.js';
 import { publish } from './publish.js';
 import { handleSlackInteraction, parseDestination, record } from './slack-interactions.js';
@@ -100,4 +101,5 @@ server.post(
 
 server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
+  resumeAutoPublish(app).catch((error) => console.error('Resuming auto-publish countdowns failed', error));
 });

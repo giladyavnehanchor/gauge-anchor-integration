@@ -13,6 +13,9 @@ describe('parseConfig', () => {
     expect(config.anchorApiBase).toBe('https://api.anchorbrowser.io/v1');
     expect(config.publishAuthor).toBe('Idan Raman');
     expect(config.thumbnailOutputDir).toMatch(/state\/thumbnails$/);
+    expect(config.autoPublishDelayMs).toBe(900_000);
+    expect(parseConfig({ ...baseEnv, AUTO_PUBLISH_DELAY_MS: '0' }).autoPublishDelayMs).toBe(0);
+    expect(() => parseConfig({ ...baseEnv, AUTO_PUBLISH_DELAY_MS: '-1' })).toThrow('AUTO_PUBLISH_DELAY_MS');
     expect(config.targets).toEqual([
       { key: 'gauge', label: 'Gauge', applicationName: 'Gauge', applicationUrl: 'https://app.withgauge.com' },
       {

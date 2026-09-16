@@ -1,4 +1,4 @@
-import type { Config, DiscoveryDraft, IdentityAlert, Log, SlackClient } from './types.js';
+import type { Config, DiscoveryDraft, IdentityAlert, Log, PublishResult, SlackClient } from './types.js';
 
 const DESTINATIONS = ['blogs', 'templates hubs', 'guides'];
 
@@ -37,7 +37,36 @@ function thumbnailLines(draft: DiscoveryDraft): string {
     .join('\n');
 }
 
-function draftBlocks(draft: DiscoveryDraft, includeImages: boolean): unknown[] {
+/** Shown on the initial draft message only; the countdown starts right after it is posted. */
+function autoPublishNote(delayMs: number): unknown[] {
+  if (delayMs === 0) return [];
+  const minutes = Math.round(delayMs / 60_000);
+  return [{
+    type: 'context',
+    elements: [{
+      type: 'mrkdwn',
+      text: `If nobody reacts within ${minutes} minutes, this article is published automatically to *blogs* with thumbnail 1. Any click here cancels that.`,
+    }],
+  }];
+}
+
+function publishResultBlocks(draft: DiscoveryDraft, result: PublishResult): { text: string; blocks: unknown[] } {
+  const text = `Published <${result.articleUrl}|${escape(draft.article.title)}>. Search indexing: ${escape(result.indexingMessage)}`;
+  const retry = result.indexingRequested
+    ? []
+    : [{
+        type: 'actions',
+        elements: [{
+          type: 'button',
+          action_id: 'request-indexing',
+          text: { type: 'plain_text', text: 'Request indexing' },
+          value: JSON.stringify({ draftId: draft.id }),
+        }],
+      }];
+  return { text, blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }, ...retry] };
+}
+
+function draftBlocks(draft: DiscoveryDraft, includeImages: boolean, footer: unknown[] = []): unknown[] {
   const images = includeImages
     ? draft.thumbnails
         .filter((thumbnail) => thumbnail.imageUrl)
@@ -80,10 +109,11 @@ function draftBlocks(draft: DiscoveryDraft, includeImages: boolean): unknown[] {
         },
       ],
     },
+    ...footer,
   ];
 }
 
-type SlackConfig = Pick<Config, 'slackWebhookUrl' | 'slackBotToken' | 'slackChannelId' | 'requestTimeoutMs'>;
+type SlackConfig = Pick<Config, 'slackWebhookUrl' | 'slackBotToken' | 'slackChannelId' | 'requestTimeoutMs' | 'autoPublishDelayMs'>;
 
 export class SlackWebhookClient implements SlackClient {
   constructor(
@@ -139,7 +169,7 @@ export class SlackWebhookClient implements SlackClient {
     }
     await this.post({
       text: `Gauge: article ready for review: ${draft.article.title}`,
-      blocks: draftBlocks(draft, true),
+      blocks: draftBlocks(draft, true, autoPublishNote(this.config.autoPublishDelayMs)),
     });
     if (this.config.slackBotToken) await this.uploadThumbnails(draft);
   }
@@ -153,16 +183,29 @@ export class SlackWebhookClient implements SlackClient {
     });
   }
 
-  async sendChannelText(channelId: string, text: string): Promise<void> {
-    await this.api('chat.postMessage', {
-      channel: channelId,
-      text,
-      blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }],
-    });
+  async sendPublishResult(draft: DiscoveryDraft, result: PublishResult, channelId?: string): Promise<void> {
+    await this.postTo(channelId, publishResultBlocks(draft, result));
+  }
+
+  async sendChannelText(text: string, channelId?: string): Promise<void> {
+    await this.postTo(channelId, { text, blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }] });
   }
 
   private configured(): boolean {
     return Boolean(this.config.slackWebhookUrl || this.config.slackBotToken);
+  }
+
+  /** Replies into the channel that triggered an interaction, or into the configured channel otherwise. */
+  private async postTo(channelId: string | undefined, payload: { text: string; blocks: unknown[] }): Promise<void> {
+    if (channelId) {
+      await this.api('chat.postMessage', { channel: channelId, ...payload });
+      return;
+    }
+    if (!this.configured()) {
+      this.log(`[slack stub] ${payload.text}`);
+      return;
+    }
+    await this.post(payload);
   }
 
   private async post(payload: { text: string; blocks: unknown[] }): Promise<void> {

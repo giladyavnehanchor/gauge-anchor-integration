@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { App } from './app.js';
+import { scheduleAutoPublish } from './auto-publish.js';
 import { ensureIdentity } from './identity.js';
 import { gaugeFindArticle } from './tasks.js';
 import type { Article, DiscoveryDraft, Identity } from './types.js';
@@ -13,7 +14,7 @@ export async function discover(app: App): Promise<DiscoveryDraft | undefined> {
 
   const draft = await prepareDraft(app, gauge, article);
   await sendDraftToSlack(app, draft);
-  return draft;
+  return scheduleAutoPublish(app, draft);
 }
 
 async function findArticleToWrite(app: App, gauge: Identity): Promise<Article | null> {

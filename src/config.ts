@@ -24,12 +24,12 @@ function booleanValue(env: RawEnv, key: string, fallback: boolean): boolean {
   throw new Error(`${key} must be true or false`);
 }
 
-function positiveInteger(env: RawEnv, key: string, fallback: number): number {
+function positiveInteger(env: RawEnv, key: string, fallback: number, minimum = 1): number {
   const value = optionalString(env, key);
   if (!value) return fallback;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`${key} must be a positive integer`);
+  if (!Number.isInteger(parsed) || parsed < minimum) {
+    throw new Error(`${key} must be an integer of at least ${minimum}`);
   }
   return parsed;
 }
@@ -96,6 +96,7 @@ export function parseConfig(input: unknown): Config {
     thumbnailTimeoutMs: positiveInteger(env, 'THUMBNAIL_TIMEOUT_MS', 180_000),
     thumbnailOutputDir: resolve(optionalString(env, 'THUMBNAIL_OUTPUT_DIR') ?? 'state/thumbnails'),
     thumbnailReferenceImage: resolve(optionalString(env, 'THUMBNAIL_REFERENCE_IMAGE') ?? 'assets/thumbnail-reference.png'),
+    autoPublishDelayMs: positiveInteger(env, 'AUTO_PUBLISH_DELAY_MS', 900_000, 0),
     stateFile: optionalString(env, 'NODE_STATE_FILE') ?? 'state/identity-monitor.json',
     draftFile: optionalString(env, 'NODE_DRAFT_FILE') ?? 'state/discovery-drafts.json',
     publishAuthor: optionalString(env, 'PUBLISH_AUTHOR') ?? 'Idan Raman',

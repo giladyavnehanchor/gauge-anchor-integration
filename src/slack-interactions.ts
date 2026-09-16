@@ -1,6 +1,7 @@
 import type { App } from './app.js';
+import { cancelAutoPublish } from './auto-publish.js';
 import { discover } from './discover.js';
-import { publish } from './publish.js';
+import { indexPublishedArticle, publish } from './publish.js';
 import type { DiscoveryDraft, PublishDestination } from './types.js';
 
 export interface SlackReply {
@@ -61,11 +62,17 @@ export async function handleSlackInteraction(app: App, payload: Record<string, u
     return { response_type: 'ephemeral', text: 'Discovery started. I will post the result in this channel.' };
   }
 
-  const draft = await loadDraft(app, interaction);
-  if (!draft) {
+  const loaded = await loadDraft(app, interaction);
+  if (!loaded) {
     return { response_type: 'ephemeral', text: 'This draft is no longer available. Use the latest discovery message or run discovery again.' };
   }
   if (!interaction.messageTs) throw new Error('Slack interaction lacks message ID');
+  const draft = await cancelAutoPublish(app, loaded);
+
+  if (interaction.actionId === 'request-indexing') {
+    void indexInBackground(app, interaction.channelId, draft);
+    return { response_type: 'ephemeral', text: `Indexing request started for <@${interaction.userId}>.` };
+  }
 
   if (interaction.actionId.startsWith('thumbnail-select-')) {
     const index = Number(interaction.actionValue.index);
@@ -114,8 +121,8 @@ async function runDiscoveryInBackground(app: App, channelId: string): Promise<vo
   try {
     const draft = await discover(app);
     await app.slack.sendChannelText(
-      channelId,
       draft ? `Discovery finished. Draft created for "${draft.article.title}".` : 'Discovery finished. No draft was created.',
+      channelId,
     );
   } catch (error) {
     await notifyFailure(app, channelId, `Discovery failed: ${errorText(error)}`);
@@ -131,18 +138,24 @@ async function publishInBackground(
 ): Promise<void> {
   try {
     const result = await publish(app, draft.id, { thumbnailPath, destination });
-    await app.slack.sendChannelText(
-      channelId,
-      `Published <${result.articleUrl}|${draft.article.title}>. Search indexing: ${result.indexingMessage}`,
-    );
+    await app.slack.sendPublishResult(draft, result, channelId);
   } catch (error) {
     await notifyFailure(app, channelId, `Publishing failed for ${draft.article.title}: ${errorText(error)}`);
   }
 }
 
+async function indexInBackground(app: App, channelId: string, draft: DiscoveryDraft): Promise<void> {
+  try {
+    const result = await indexPublishedArticle(app, draft.id);
+    await app.slack.sendPublishResult(draft, result, channelId);
+  } catch (error) {
+    await notifyFailure(app, channelId, `Indexing request failed for ${draft.article.title}: ${errorText(error)}`);
+  }
+}
+
 async function notifyFailure(app: App, channelId: string, message: string): Promise<void> {
   app.log(message);
-  await app.slack.sendChannelText(channelId, message).catch((error) => {
+  await app.slack.sendChannelText(message, channelId).catch((error) => {
     console.error('Slack failure notification failed', error);
   });
 }

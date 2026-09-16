@@ -32,6 +32,10 @@ export class MemoryDraftStore implements DraftStore {
   async put(draft: DiscoveryDraft): Promise<void> {
     this.drafts.set(draft.id, draft);
   }
+
+  async list(): Promise<DiscoveryDraft[]> {
+    return [...this.drafts.values()];
+  }
 }
 
 export class NodeFileDraftStore implements DraftStore {
@@ -48,6 +52,10 @@ export class NodeFileDraftStore implements DraftStore {
     const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(drafts, null, 2)}\n`, 'utf8');
     await rename(temporaryPath, this.filePath);
+  }
+
+  async list(): Promise<DiscoveryDraft[]> {
+    return Object.values(await this.read());
   }
 
   private async read(): Promise<DraftMap> {

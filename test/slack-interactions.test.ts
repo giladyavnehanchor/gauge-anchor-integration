@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleSlackInteraction } from '../src/slack-interactions.js';
-import { article, createFakeApp, healthyGauge, readyDraft } from './fakes.js';
+import { article, createFakeApp, healthyGauge, healthySearchConsole, readyDraft } from './fakes.js';
 
 function payload(action: Record<string, unknown>, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -60,7 +60,7 @@ describe('handleSlackInteraction', () => {
   it('starts publishing in the background and reports the result to the channel', async () => {
     const app = createFakeApp();
     await app.drafts.put(readyDraft({ selectedThumbnailIndex: 0, selectedDestination: 'blogs' }));
-    app.anchor.identities['app-search-console'] = [];
+    app.anchor.identities['app-gauge'] = [];
 
     const reply = await handleSlackInteraction(app, payload({
       action_id: 'publish-article',
@@ -71,6 +71,46 @@ describe('handleSlackInteraction', () => {
     expect(reply.text).toBe('Publishing started for <@U1>.');
     expect(app.slack.texts[0]).toContain('Publishing failed for A Gauge article');
     expect(app.slack.texts[0]).toContain('/tmp/one.png');
+  });
+
+  it('cancels the auto-publish countdown on any interaction with the draft', async () => {
+    const app = createFakeApp();
+    await app.drafts.put(readyDraft({ autoPublishAt: '2030-01-01T00:15:00.000Z' }));
+
+    await handleSlackInteraction(app, payload({
+      action_id: 'thumbnail-select-0',
+      value: JSON.stringify({ draftId: 'draft-1', index: 0 }),
+    }));
+
+    const draft = await app.drafts.get('draft-1');
+    expect(draft?.autoPublishAt).toBeUndefined();
+    expect(draft?.selectedThumbnailIndex).toBe(0);
+    expect(app.slack.updates[0]?.autoPublishAt).toBeUndefined();
+  });
+
+  it('requests indexing on its own from the Request indexing button', async () => {
+    const app = createFakeApp();
+    healthySearchConsole(app);
+    app.anchor.taskResults['search-console-request-indexing'] = { requested: true, message: 'Indexing requested' };
+    await app.drafts.put(readyDraft({
+      status: 'published',
+      publishedArticleUrl: 'https://anchorbrowser.io/blog/a',
+      indexingRequested: false,
+      indexingMessage: 'not requested',
+    }));
+
+    const reply = await handleSlackInteraction(app, payload({
+      action_id: 'request-indexing',
+      value: JSON.stringify({ draftId: 'draft-1' }),
+    }));
+    await vi.waitFor(() => expect(app.slack.results).toHaveLength(1));
+
+    expect(reply.text).toBe('Indexing request started for <@U1>.');
+    expect(app.anchor.taskRuns.map(({ task }) => task)).toEqual([
+      'anchor-identity-monitor-search-console-dom-check',
+      'search-console-request-indexing',
+    ]);
+    expect(app.slack.results[0]).toMatchObject({ channelId: 'C1', result: { indexingRequested: true } });
   });
 
   it('runs discovery in the background from the retry button', async () => {
