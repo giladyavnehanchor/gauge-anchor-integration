@@ -41,7 +41,7 @@ export function createApp(config: Config = readConfig()): App {
     log,
     anchor: new HttpAnchorClient(config),
     slack: new SlackWebhookClient(config, fetch, log, readBytes),
-    thumbnails: new HttpThumbnailClient(config, fetch, saveImage, log),
+    thumbnails: new HttpThumbnailClient(config, fetch, saveImage, log, readBytes),
     drafts: new NodeFileDraftStore(config.draftFile),
     state: new NodeFileStateStore(config.stateFile),
   };

@@ -95,6 +95,7 @@ export function parseConfig(input: unknown): Config {
     taskPollIntervalMs: positiveInteger(env, 'ANCHOR_TASK_POLL_INTERVAL_MS', 3_000),
     thumbnailTimeoutMs: positiveInteger(env, 'THUMBNAIL_TIMEOUT_MS', 180_000),
     thumbnailOutputDir: resolve(optionalString(env, 'THUMBNAIL_OUTPUT_DIR') ?? 'state/thumbnails'),
+    thumbnailReferenceImage: resolve(optionalString(env, 'THUMBNAIL_REFERENCE_IMAGE') ?? 'assets/thumbnail-reference.png'),
     stateFile: optionalString(env, 'NODE_STATE_FILE') ?? 'state/identity-monitor.json',
     draftFile: optionalString(env, 'NODE_DRAFT_FILE') ?? 'state/discovery-drafts.json',
     publishAuthor: optionalString(env, 'PUBLISH_AUTHOR') ?? 'Idan Raman',

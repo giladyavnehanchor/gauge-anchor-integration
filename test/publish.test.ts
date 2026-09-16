@@ -10,7 +10,7 @@ async function setup(): Promise<{ app: FakeApp; thumbnailPath: string }> {
   const thumbnailPath = join(outputDir, 'thumbnail-1.png');
   await writeFile(thumbnailPath, Buffer.from('thumbnail'));
   const app = createFakeApp({ thumbnailOutputDir: outputDir });
-  await app.drafts.put(readyDraft({ thumbnails: [{ title: 'Option 1', prompt: 'prompt', filePath: thumbnailPath }] }));
+  await app.drafts.put(readyDraft({ thumbnails: [{ title: 'Option 1', titleText: 'Short Title Text', prompt: 'prompt', filePath: thumbnailPath }] }));
   healthySearchConsole(app);
   app.anchor.taskResults['gauge-publish-article'] = 'https://anchorbrowser.io/blog/article-1';
   app.anchor.taskResults['search-console-request-indexing'] = { requested: true, message: 'Indexing requested' };

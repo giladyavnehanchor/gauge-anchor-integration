@@ -41,6 +41,7 @@ export interface Config {
   thumbnailModel?: string;
   thumbnailTimeoutMs: number;
   thumbnailOutputDir: string;
+  thumbnailReferenceImage: string;
   openaiApiKey?: string;
   geminiApiKey?: string;
   stateFile: string;
@@ -174,6 +175,7 @@ export interface Article {
 
 export interface ThumbnailOption {
   title: string;
+  titleText: string;
   prompt: string;
   imageUrl?: string;
   filePath?: string;

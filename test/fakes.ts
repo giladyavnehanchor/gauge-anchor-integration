@@ -39,8 +39,8 @@ export const article: Article = {
 };
 
 export const thumbnails: ThumbnailOption[] = [
-  { title: 'Option 1', prompt: 'prompt', filePath: '/tmp/one.png' },
-  { title: 'Option 2', prompt: 'prompt', filePath: '/tmp/two.png' },
+  { title: 'Option 1', titleText: 'Short Title Text', prompt: 'prompt', filePath: '/tmp/one.png' },
+  { title: 'Option 2', titleText: 'Short Title Text', prompt: 'prompt', filePath: '/tmp/two.png' },
 ];
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
@@ -56,6 +56,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     taskPollIntervalMs: 1,
     thumbnailTimeoutMs: 1000,
     thumbnailOutputDir: '/tmp',
+    thumbnailReferenceImage: '/tmp/reference.png',
     stateFile: 'state/test.json',
     draftFile: 'state/test-drafts.json',
     publishAuthor: 'Idan Raman',
