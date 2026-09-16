@@ -373,11 +373,11 @@ When a Google session finally expires, the person on rotation gets a Slack messa
 
 ## The human in the loop
 
-We deliberately did not automate the *decision* to publish. Discovery ends in a Slack message with the article title, summary, ticket link, and five generated thumbnail options rendered as buttons. A destination dropdown and a **Post** button sit underneath.
+We kept a human within reach of the *decision* to publish. Discovery ends in a Slack message with the article title, summary, ticket link, and five generated thumbnail options rendered as buttons. A destination dropdown and a **Post** button sit underneath.
 
 Clicking a thumbnail or picking a destination updates the message in place. Clicking **Post** returns an ephemeral "Publishing started" immediately, then runs `publish()` in the background and reports the article URL and the indexing status back to the channel a few minutes later. The draft is saved to disk with the selected options, so a second click, a retry after a failure, or two people racing each other all resolve to the same single publish.
 
-We did put a clock on the decision, though. The message says so in its footer: if nobody reacts within fifteen minutes, the article is published to the blog with the first thumbnail. Any click on the message cancels the countdown, and the cancellation is stored on the draft rather than in memory, so a server restart in the middle of the window re-arms the timer instead of forgetting it. When the countdown fires, Slack gets a plain sentence saying the publish was automatic and which defaults it used, followed by the same result message a manual publish would produce.
+The pipeline is fully automated end to end: if nobody reacts within fifteen minutes, the article goes out to the blog with the first thumbnail, and Slack is told it happened automatically. The message is there so a human can interrupt, not so they have to approve.
 
 ## Things we got wrong first
 
